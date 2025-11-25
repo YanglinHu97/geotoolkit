@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: geotoolkit
+Version: 0.1.0
+Summary: Tiny vector geoprocessing toolkit
+License: MIT
+Requires-Python: >=3.9
+Requires-Dist: shapely
+Requires-Dist: pyproj
+Requires-Dist: pandas

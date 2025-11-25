@@ -1,0 +1,13 @@
+pyproject.toml
+setup.cfg
+geotoolkit/__init__.py
+geotoolkit/analysis.py
+geotoolkit/io.py
+geotoolkit/project.py
+geotoolkit.egg-info/PKG-INFO
+geotoolkit.egg-info/SOURCES.txt
+geotoolkit.egg-info/dependency_links.txt
+geotoolkit.egg-info/requires.txt
+geotoolkit.egg-info/top_level.txt
+tests/test_analysis.py
+tests/test_project.py
