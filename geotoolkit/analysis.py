@@ -1,67 +1,82 @@
-from typing import Dict, Any, Tuple
-from shapely.geometry import shape, mapping
-from shapely.ops import unary_union, nearest_points
+# Geometric operations implemented following the patterns introduced
+# in the geo-algorithms practice notebooks (buffer, intersection, nearest).
 
-def buffer(geometry: Dict[str, Any], dist_m: float) -> Dict[str, Any]:
+from __future__ import annotations
+
+from typing import Any, Dict, Tuple
+from shapely.geometry import shape, mapping
+from shapely.ops import nearest_points
+
+# Geometric operations implemented following the patterns introduced
+# in the geo-algorithms practice notebooks (buffer, intersection, nearest).
+
+JsonDict = Dict[str, Any]
+
+def buffer(geometry: JsonDict, dist_m: float) -> JsonDict:
     """
     Create a buffer around a geometry.
-    Input must be in a meter-based CRS (e.g., EPSG:3857).
+
+    Notes
+    -----
+    Distance-based operations require a metric CRS (e.g., EPSG:3857 or UTM).
     """
     g = shape(geometry)
     return mapping(g.buffer(dist_m))
 
 
-def clip(feature_or_fc: Dict[str, Any], clipper_geom: Dict[str, Any]) -> Dict[str, Any]:
+def clip(feature_or_fc: JsonDict, clipper_geom: JsonDict) -> JsonDict:
     """
-    Clip a Feature or FeatureCollection by a polygon.
-    CRS of inputs must match.
+    Clip a Feature or FeatureCollection by a polygon (intersection).
+
+    Returns
+    -------
+    GeoJSON FeatureCollection
+        Always returns a FeatureCollection. If nothing intersects, returns an
+        empty FeatureCollection (features=[]). This keeps the return type stable.
     """
     clipper = shape(clipper_geom)
     t = feature_or_fc.get("type")
 
-    # FeatureCollection
-    if t == "FeatureCollection":
-        out_feats = []
-        for ft in feature_or_fc["features"]:
-            geom = shape(ft["geometry"])
-            inter = geom.intersection(clipper)
-            if not inter.is_empty:
-                out_feats.append({
-                    "type": "Feature",
-                    "properties": ft.get("properties", {}),
-                    "geometry": mapping(inter)
-                })
-        return {"type": "FeatureCollection", "features": out_feats}
-
-    # Feature
-    elif t == "Feature":
-        geom = shape(feature_or_fc["geometry"])
+    def _clip_feature(ft: JsonDict) -> JsonDict | None:
+        geom = shape(ft["geometry"])
         inter = geom.intersection(clipper)
         if inter.is_empty:
             return None
         return {
             "type": "Feature",
-            "properties": feature_or_fc.get("properties", {}),
-            "geometry": mapping(inter)
+            "properties": ft.get("properties", {}),
+            "geometry": mapping(inter),
         }
 
-    # Geometry only
-    else:
-        inter = shape(feature_or_fc).intersection(clipper)
-        return mapping(inter)
+    # FeatureCollection
+    if t == "FeatureCollection":
+        out_feats = []
+        for ft in feature_or_fc.get("features", []):
+            clipped_ft = _clip_feature(ft)
+            if clipped_ft is not None:
+                out_feats.append(clipped_ft)
+        return {"type": "FeatureCollection", "features": out_feats}
+
+    # Feature -> wrap into a FeatureCollection for stable return type
+    if t == "Feature":
+        clipped_ft = _clip_feature(feature_or_fc)
+        return {"type": "FeatureCollection", "features": [] if clipped_ft is None else [clipped_ft]}
+
+    # Geometry only -> return geometry intersection
+    inter = shape(feature_or_fc).intersection(clipper)
+    return mapping(inter)
 
 
-def nearest(a_geom: Dict[str, Any], b_geom: Dict[str, Any]) -> Tuple[float, Dict[str, Any], Dict[str, Any]]:
+def nearest(a_geom: JsonDict, b_geom: JsonDict) -> Tuple[float, JsonDict, JsonDict]:
     """
     Compute nearest distance and nearest points between two geometries.
-    CRS must be metric for meaningful distance.
+
+    Notes
+    -----
+    Distances are meaningful only in a metric CRS.
     """
     A = shape(a_geom)
     B = shape(b_geom)
 
-    # union multiparts for simplicity
-    aU = unary_union([A])
-    bU = unary_union([B])
-
-    pA, pB = nearest_points(aU, bU)
+    pA, pB = nearest_points(A, B)
     return (pA.distance(pB), mapping(pA), mapping(pB))
