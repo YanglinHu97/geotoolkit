@@ -28,6 +28,18 @@ The library is lightweight and does not rely on GDAL, making it suitable for env
 
 ---
 
+## Relation to practice lectures
+
+This project is developed based on the coding patterns and examples introduced in the practice lectures of the course.
+
+- Vector data handling and GeoJSON input/output follow the workflows demonstrated in the practice sessions.
+- Coordinate reference system transformations and metric-based operations are implemented following the geospatial data handling examples.
+- Geometric operations such as buffering, clipping (intersection), and nearest-distance computation are adapted from the shapely-based examples shown in the geo-algorithms practice notebooks.
+- The overall project structure, including the Python package layout, demo scripts, unit tests, and documentation, is inspired by the example library development and self-assessment exercises.
+
+For testing, the vector dataset `search_points.geojson` provided in the P3 geoprocessing practice is reused.  
+Since it is already provided in a metric coordinate reference system (EPSG:32632), it can be used directly for buffer and nearest-distance computations.
+
 ## Installation
 
 Create and activate a virtual environment:
