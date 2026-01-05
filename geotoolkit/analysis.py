@@ -124,3 +124,18 @@ def is_contained(container_geom: JsonDict, content_geom: JsonDict) -> bool:
     """
     # .contains() returns True only if no points of the second geometry lie in the exterior of the first
     return shape(container_geom).contains(shape(content_geom))
+
+def get_bbox(geometry: JsonDict) -> tuple[float, float, float, float]:
+    """
+    Return bounding box (minx, miny, maxx, maxy) of a geometry.
+    """
+    g = shape(geometry)
+    return g.bounds
+
+def get_centroid(geometry: JsonDict) -> JsonDict:
+    """
+    Return centroid of a geometry as GeoJSON Point.
+    """
+    g = shape(geometry)
+    return mapping(g.centroid)
+

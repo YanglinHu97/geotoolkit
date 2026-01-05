@@ -2,10 +2,15 @@ import sys
 import os
 import json
 import time
+import matplotlib.pyplot as plt
 from geotoolkit.io import read_geojson, write_geojson, write_csv
 from geotoolkit.project import to_epsg
-from geotoolkit.analysis import buffer, clip, nearest, get_area, get_length, is_contained
+from geotoolkit.analysis import buffer, clip, nearest, get_area, get_length, is_contained, get_bbox, get_centroid
 from geotoolkit.viz import plot_features
+from geotoolkit.query import tag_points_within, filter_points_within
+from geotoolkit.knn import knn_points
+from shapely.geometry import shape
+
 
 # ==========================================
 # 1. Global Preparation Stage
@@ -149,6 +154,237 @@ def task_viz():
     except Exception as e:
         print(f" [Error] Plotting failed: {e}")
 
+def task_batch():
+    import inspect
+    import geotoolkit.query as q
+
+    print("DEBUG demo.py path:", __file__)
+    print("DEBUG query.py path:", q.__file__)
+    print("DEBUG filter_points_within signature:", inspect.signature(q.filter_points_within))
+    print("DEBUG tag_points_within signature:", inspect.signature(q.tag_points_within))
+
+    """Task 7: Batch Query on generated_points.geojson (baseline vs indexed)"""
+    print("\n>>> Executing [7] Batch Query on generated_points.geojson ...")
+
+    # 1) load data
+    pts_fc = read_geojson("data/generated_points.geojson")  # already EPSG:3857
+    pts_m = pts_fc
+
+    # 2) reference buffer (EPSG:3857)
+    buf_geom = buffer(poly, 500)
+
+    # 3) baseline
+    t0 = time.perf_counter()
+    tagged_base = tag_points_within(pts_m, buf_geom, use_index=False)
+    inside_base = filter_points_within(pts_m, buf_geom, use_index=False, mode="covers")
+    t1 = time.perf_counter()
+
+    # 4) indexed
+    t2 = time.perf_counter()
+    tagged_idx = tag_points_within(pts_m, buf_geom, use_index=True)
+    inside_idx = filter_points_within(pts_m, buf_geom, use_index=True, mode="covers")
+    t3 = time.perf_counter()
+
+    # 5) print stats
+    print(f" -> baseline: {t1 - t0:.4f}s, indexed: {t3 - t2:.4f}s")
+    print(f" -> inside buffer points: {len(inside_idx['features'])} / {len(pts_m['features'])}")
+
+    # 6) save outputs
+    write_geojson(tagged_idx, "out/generated_points_tagged.geojson")
+    write_geojson(inside_idx, "out/generated_points_inside_buffer.geojson")
+
+
+    # 7) visualize inside points + context polygon/buffer
+    viz_feats = []
+    viz_feats.extend(inside_idx["features"])
+    viz_feats.append({"type": "Feature", "geometry": poly, "properties": {"type": "Original"}})
+    viz_feats.append({"type": "Feature", "geometry": buf_geom, "properties": {"type": "Buffer"}})
+
+    out_png = "out/generated_points_inside_buffer.png"
+    plot_features(
+        {"type": "FeatureCollection", "features": viz_feats},
+        title="Generated Points Inside Buffer",
+        output_path=out_png,
+    )
+
+    if sys.platform == "win32":
+        try:
+            os.startfile(os.path.abspath(out_png))
+        except Exception:
+            pass
+
+def task_geometry_summary():
+    print("\n>>> Executing [8] Geometry Summary Report ...")
+
+    rows = []
+
+    # --- Original Polygon ---
+    bbox = get_bbox(poly)
+    centroid = get_centroid(poly)
+    rows.append({
+        "name": "original_polygon",
+        "geom_type": "Polygon",
+        "minx": bbox[0],
+        "miny": bbox[1],
+        "maxx": bbox[2],
+        "maxy": bbox[3],
+        "centroid_x": centroid["coordinates"][0],
+        "centroid_y": centroid["coordinates"][1],
+        "area": get_area(poly),
+        "length": get_length(poly),
+    })
+
+    # --- Buffer Polygon ---
+    buf = buffer(poly, 500)
+    bbox = get_bbox(buf)
+    centroid = get_centroid(buf)
+    rows.append({
+        "name": "buffer_500m",
+        "geom_type": "Polygon",
+        "minx": bbox[0],
+        "miny": bbox[1],
+        "maxx": bbox[2],
+        "maxy": bbox[3],
+        "centroid_x": centroid["coordinates"][0],
+        "centroid_y": centroid["coordinates"][1],
+        "area": get_area(buf),
+        "length": get_length(buf),
+    })
+
+    # --- Generated Points (as a set) ---
+    pts_m = read_geojson("data/generated_points.geojson")  
+    pts = [f["geometry"] for f in pts_m["features"] if f["geometry"]["type"] == "Point"]
+    pts_geom = {
+        "type": "MultiPoint",
+        "coordinates": [p["coordinates"] for p in pts]
+    }
+
+    bbox = get_bbox(pts_geom)
+    centroid = get_centroid(pts_geom)
+
+    rows.append({
+        "name": "generated_points",
+        "geom_type": "PointCollection",
+        "minx": bbox[0],
+        "miny": bbox[1],
+        "maxx": bbox[2],
+        "maxy": bbox[3],
+        "centroid_x": centroid["coordinates"][0],
+        "centroid_y": centroid["coordinates"][1],
+        "area": None,
+        "length": None,
+    })
+
+    # --- Export CSV ---
+    out_csv = "out/geometry_summary.csv"
+    write_csv(rows, out_csv)
+    print(f" -> Geometry summary saved to {out_csv}")
+
+    if sys.platform == "win32":
+        try:
+            os.startfile(os.path.abspath(out_csv))
+        except Exception:
+            pass
+
+def task_knn():
+    """Task 9: KNN - find K nearest points from generated_points to the target point in sample.geojson"""
+    print("\n>>> Executing [9] KNN Query on generated_points.geojson ...")
+
+    # load generated points (already EPSG:3857)
+    pts_fc = read_geojson("data/generated_points.geojson")
+    pts_m = pts_fc
+
+    # choose target point: the point from sample.geojson (already projected in init stage)
+    target_pt = pt
+
+    # reference buffer for visualization context
+    buf_geom = buffer(poly, 500)
+
+    # read k from user
+    user_k = input("Enter k (default 10): ").strip()
+    k = int(user_k) if user_k.isdigit() else 10
+
+    # compute KNN (baseline + indexed optional)
+    use_idx_input = input("Use spatial index? (y/n, default y): ").strip().lower()
+    use_index = (use_idx_input != "n")
+
+    topk_fc = knn_points(pts_m, target_pt, k=k, use_index=use_index)
+
+    # print summary
+    print(f" -> Found top-{len(topk_fc['features'])} nearest points (use_index={use_index})")
+    for ft in topk_fc["features"]:
+        pid = ft.get("properties", {}).get("id", ft.get("properties", {}).get("name", "NA"))
+        d = ft.get("properties", {}).get("distance_m", None)
+        r = ft.get("properties", {}).get("knn_rank", None)
+        print(f"    #{r}  id={pid}  dist={d:.2f} m")
+
+    # save GeoJSON
+    out_geojson = "out/knn_topk.geojson"
+    write_geojson(topk_fc, out_geojson)
+    print(f" -> Saved: {out_geojson}")
+
+    # plot
+    out_png = "out/knn_topk.png"
+    plot_knn(poly, buf_geom, target_pt, topk_fc, out_png)
+
+    # auto-open on Windows
+    if sys.platform == "win32":
+        try:
+            os.startfile(os.path.abspath(out_png))
+        except Exception:
+            pass
+
+
+def plot_knn(poly_geom, buf_geom, target_pt_geom, points_fc, output_path):
+    """
+    Create a standalone plot for KNN result:
+    - polygon outline
+    - buffer outline
+    - target point highlighted
+    - top-k points highlighted
+    """
+    poly_s = shape(poly_geom)
+    buf_s = shape(buf_geom)
+    tgt_s = shape(target_pt_geom)
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.set_title("KNN Top-K Points to Target", fontsize=14, fontweight="bold")
+
+    # polygon outline
+    if poly_s.geom_type == "Polygon":
+        x, y = poly_s.exterior.xy
+        ax.plot(x, y, linewidth=1.5)
+
+    # buffer outline
+    if buf_s.geom_type == "Polygon":
+        x, y = buf_s.exterior.xy
+        ax.plot(x, y, linewidth=1.0, linestyle="--")
+
+    # plot top-k points
+    xs = []
+    ys = []
+    for ft in points_fc.get("features", []):
+        p = shape(ft["geometry"])
+        xs.append(p.x)
+        ys.append(p.y)
+    ax.scatter(xs, ys, s=30, marker="o")  # top-k points
+
+    # plot target point (bigger + different marker)
+    ax.scatter([tgt_s.x], [tgt_s.y], s=120, marker="x")
+
+    ax.set_aspect("equal")
+    ax.grid(True, linestyle="--", alpha=0.5)
+    ax.set_xlabel("X (Meters, EPSG:3857)")
+    ax.set_ylabel("Y (Meters, EPSG:3857)")
+
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+    print(f" -> Visualization image saved to: {output_path}")
+
+
+
+
+
 def task_report():
     """Task 6: Generate Excel/CSV Report (Linked Mode)"""
     print("\n>>> Executing [6] Generating Distance Report...")
@@ -261,7 +497,12 @@ MENU = {
     "3": ("Calculate Nearest Distance", task_nearest),
     "4": ("Geometric Analysis", task_analysis),
     "5": ("Visualize Results", task_viz),
-    "6": ("Generate Report (Export CSV)", task_report)
+    "6": ("Generate Report (Export CSV)", task_report),
+    "7": ("Batch Query (Generated Points) [Baseline vs Index]", task_batch),
+    "8": ("Geometry Summary (bbox / centroid)", task_geometry_summary),
+    "9": ("KNN Top-K Nearest Points", task_knn),
+
+
 }
 
 # ==========================================
