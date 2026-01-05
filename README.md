@@ -9,30 +9,48 @@ The library is lightweight and does not rely on GDAL, making it suitable for env
 ## Features
 
 ### GeoJSON I/O
-- `read_geojson(path)`
-- `write_geojson(obj, path)`
-- `write_csv(data_list, path)` (Export a CSV report)
+- `read_geojson(path)` — read GeoJSON into a Python `dict`.
+- `write_geojson(obj, path)` — write GeoJSON to disk (pretty-printed).
+- `write_csv(data_list, path)` — export a CSV report from a list of dictionaries.
 
 ### Coordinate Transformation
 - `to_epsg(feature_or_fc, epsg_from, epsg_to)`  
-  Converts a geometry, Feature, or FeatureCollection between coordinate systems.
+  Converts a geometry / Feature / FeatureCollection between coordinate systems (EPSG codes).
 
 ### Geometric Operations
 - `buffer(geometry, dist_m)`  
-  Creates a (metric) buffer around a geometry.
+  Creates a buffer around a geometry (distance units depend on the CRS).
 
 - `clip(feature_or_fc, clipper_geom)`  
-  Clips a Feature or FeatureCollection using a polygon.
+  Clips a Feature or FeatureCollection using a polygon (intersection).
 
 - `nearest(a_geom, b_geom)`  
   Computes nearest distance and returns nearest points.
 
-- `get_area(geometry)` (Area calculation)
-- `get_length(geometry)` (Length / perimeter calculation)
-- `is_contained(container_geom, content_geom)` (Containment check)
+- `get_area(geometry)` — area of a geometry.
+- `get_length(geometry)` — length/perimeter of a geometry.
+- `is_contained(container_geom, content_geom)` — containment test (`contains`).
+
+#### Spatial Indexing & Geometry Extraction (NEW)
+- `nearest_optimized(search_geom, target_collection)`  
+  Uses `shapely.strtree.STRtree` to quickly find a nearest neighbor geometry from a FeatureCollection.
+
+- `get_centroid(geometry)`  
+  Returns the centroid of a geometry (as a GeoJSON Point).
+
+- `get_envelope(geometry)`  
+  Returns the minimum bounding rectangle (envelope) of a geometry (as a GeoJSON Polygon).
 
 ### Visualization
-- `plot_features(feature_collection, title="...", output_path="...")` (Save a PNG plot)
+- `plot_features(feature_collection, title="...", output_path="...")`  
+  Saves a PNG plot of a FeatureCollection.
+
+Visualization supports multiple “feature roles” via `feature.properties.type`:
+- `Original` — reference polygon outline (black dashed line)
+- `Centroid` — derived centroid points (green)
+- `Envelope` — derived envelope polygons (orange dash-dot)
+- default polygons (e.g., buffer/clip) — filled polygon layer
+- default points — input points (red)
 
 ---
 
@@ -46,7 +64,7 @@ This project is developed based on the coding patterns and examples introduced i
 - The overall project structure, including the Python package layout, demo scripts, unit tests, and documentation, is inspired by the example library development and self-assessment exercises.
 
 > ✅ **Update note (aligned with the current code)**  
-> `demo.py` reads `data/sample.geojson` and reprojects it from EPSG:4326 to EPSG:3857 before any metric operations. This is important because buffering and distance calculations assume metric units (meters).
+> `demo.py` reads `data/sample.geojson` and reprojects it from EPSG:4326 to EPSG:3857 before metric operations. This matters because buffering, area, length, and distance are meaningful only in a metric CRS (meters).
 
 ---
 
@@ -69,7 +87,7 @@ pip install -e .
 
 Your code currently uses these third‑party libraries:
 
-- `shapely` (geometry operations: buffer / intersection / nearest / area / length / contains)
+- `shapely` (geometry operations, including STRtree spatial indexing)
 - `pyproj` (EPSG coordinate transformations)
 - `matplotlib` (saving visualizations to PNG)
 
@@ -96,13 +114,13 @@ geotoolkit/
 ├── data/
 │   └── sample.geojson
 │
-├── out/
+├── out/                  # generated outputs (created automatically by demo.py)
 │
 ├── tests/
 │   ├── test_project.py
 │   └── test_analysis.py
 │
-├── demo.py
+├── demo.py               # interactive console demo
 ├── README.md
 ├── setup.cfg
 └── pyproject.toml
@@ -152,99 +170,169 @@ Output files will appear in the `out/` directory.
 
 ## Interactive Demo Console (`demo.py`) — recommended workflow (matches the current code)
 
-`demo.py` provides an interactive console menu. You can run a single task, or run multiple tasks by entering comma-separated values (e.g., `1,6`).
+`demo.py` provides an interactive console menu. You can run a single task, or run multiple tasks by entering comma-separated values (e.g., `1,6` or `5,8`).  
+It also accepts Chinese commas (`，`) and treats both commas and spaces as separators.
 
-Start:
+### What happens before the menu appears (global preparation)
+
+When the script starts, it performs a one-time initialization:
+
+1. Ensures the `out/` directory exists.
+2. Loads raw data from `data/sample.geojson` (WGS84 lon/lat).
+3. Reprojects the data to EPSG:3857 (meters) for metric operations.
+4. Extracts:
+   - the first `Polygon` geometry as `poly`
+   - the first `Point` geometry as `pt`
+
+If initialization fails, the program exits immediately.
+
+### Start
 
 ```bash
 python demo.py
 ```
 
-You will see a menu with tasks such as:
+### Menu items
 
 - `[1] Generate Buffer`
 - `[2] Clip Features`
-- `[3] Compute Nearest Distance`
-- `[4] Geometry Checks (Analysis)`
-- `[5] Visualize Results`
-- `[6] Export CSV Report`
+- `[3] Calculate Nearest Distance` (standard / brute force, with timing)
+- `[4] Geometric Analysis` (perimeter + containment check)
+- `[5] Visualize Results` (smart mode with linkage + overlays)
+- `[6] Generate Report (Export CSV)` (linked mode)
+- `[7] High-Speed Search (STRtree) [NEW!]`
+- `[8] Extract Centroids/Envelopes [NEW!]`
 
 Exit by typing any of: `0`, `q`, `quit`, `exit`.
 
+---
+
 ### Task 1: Generate Buffer
 
-- Data source: reads `data/sample.geojson`, then projects to EPSG:3857 (meters) before calculations.
-- Interaction: prompts for the buffer distance in meters (default is `500`).
-- Output:
-  - `out/buffer_500m.geojson` (buffer result)
-  - Prints the buffer area (square meters) using `get_area()`.
+Creates a buffer around the main polygon.
 
-> Note: The output filename is fixed as `buffer_500m.geojson`, but the actual buffer distance comes from your input.
+- Interaction:
+  - Prompts for buffer distance in meters (default `500`).
+  - Note: the input check uses `str.isdigit()`, so decimals like `12.5` are treated as invalid and will fall back to `500`.
+- Output:
+  - GeoJSON: `out/buffer_500m.geojson`
+  - Console: prints the buffer area (square meters)
+
+> Note: the output filename remains `buffer_500m.geojson` even if you enter a distance other than 500.
+
+---
 
 ### Task 2: Clip Features
 
-- Clipper geometry: a **fixed 500m buffer** around the original polygon is used as the clipper.
-- Input: the projected FeatureCollection `fc_m`.
+Clips the full FeatureCollection using a temporary **500m buffer** as the clipper geometry.
+
 - Output:
-  - `out/clipped_features.geojson`
+  - GeoJSON: `out/clipped_features.geojson`
 
-### Task 3: Compute Nearest Distance
+---
 
-- Computes the nearest distance from the point to the polygon.
-- The unit depends on CRS; in EPSG:3857 it is interpreted as meters.
-- Output: prints the distance to the console.
+### Task 3: Calculate Nearest Distance (Standard / Brute Force)
 
-### Task 4: Geometry Checks (Analysis)
+Computes the nearest distance between `pt` and `poly` using the standard approach.
 
-- Creates a fixed 500m buffer first, then:
-  - Computes its perimeter using `get_length()`
-  - Checks whether the original point is inside the buffer using `is_contained()`
+- Output:
+  - Nearest distance (meters in EPSG:3857)
+  - Runtime in milliseconds
 
-### Task 5: Visualize Results
+---
 
-The visualization logic automatically chooses what to plot:
+### Task 4: Geometric Analysis
 
-- If `out/clipped_features.geojson` exists: plot the clipped results.
-- Else if `out/buffer_500m.geojson` exists: plot the buffer result (supports both FeatureCollection and plain Polygon geometry).
-- Otherwise: plot the original input data.
+Runs basic geometry checks on a temporary **500m buffer**:
 
-Output file:
+- Perimeter: `get_length(temp_buf)`
+- Containment: `is_contained(temp_buf, pt)`
 
-- `out/visualization_result.png`
+Outputs perimeter (meters) and whether the point is strictly inside the buffer.
 
-On Windows, the script attempts to open the generated image automatically.
+---
 
-> The plot labels use EPSG:3857 meter-based axes.
+### Task 5: Visualize Results (Smart Mode with Linkage)
 
-### Task 6: Export CSV Report
+Generates `out/visualization_result.png`.
 
-Exports a CSV report of **point-to-original-polygon** distances, including whether each point lies inside a reference buffer.
+#### 5.1 Base layer selection (priority order)
 
-#### 6.1 Data selection (exactly as implemented)
+1. If `out/clipped_features.geojson` exists → display clipped results
+2. Else if `out/buffer_500m.geojson` exists → display buffer results
+3. Else → display original reprojected data (`fc_m`)
 
-- Which points are analyzed:
-  - If `out/clipped_features.geojson` exists, only points from the clipped output are analyzed.
-  - Otherwise, all points from the original input are analyzed.
+#### 5.2 Overlay layer (linked to Task 8)
 
-- Which buffer is used for the `Inside_Buffer` column:
-  - If `out/buffer_500m.geojson` exists, it is loaded and used as the reference buffer.
-  - Otherwise, a default `buffer(poly, 500)` is used as the reference.
+If `out/geo_features.geojson` exists (generated by Task 8), it is loaded and added as an overlay on top of the base map.
 
-#### 6.2 CSV columns (exactly as produced)
+#### 5.3 Context layers (when displaying processed results)
 
-Each point becomes one row, with:
+If the base layer is Buffer/Clip (i.e., processed results), the visualization also appends:
 
-- `ID`: running index starting at 1
-- `Name`: from `properties.name` if present, otherwise `Point_1`, `Point_2`, ...
-- `Data_Source`: indicates whether the point came from the original data or from clipped output
-- `Distance_to_Polygon`: nearest distance to the original polygon (meters in EPSG:3857), rounded to 2 decimals
-- `Inside_Buffer (...)`: `Yes`/`No`, with the source of the buffer noted in the header (e.g., default 500m vs loaded from file)
+- The original polygon outline with `properties.type = "Original"` (reference outline)
+- All original points (context layer)
 
-Output file:
+---
 
-- `out/distance_report.csv`
+### Task 6: Generate Report (Export CSV) — Linked Mode
 
-On Windows, the script attempts to open the generated CSV automatically.
+Exports `out/distance_report.csv`.
+
+This report computes, for each target point:
+
+- distance to the original polygon
+- whether it lies inside a reference buffer
+
+#### 6.1 Which points are analyzed?
+
+- If `out/clipped_features.geojson` exists → analyze only points from the clipped output
+- Otherwise → analyze all points from the original dataset
+
+#### 6.2 Which buffer is used for the `Inside_Buffer` column?
+
+- If `out/buffer_500m.geojson` exists → load it as the reference standard
+- Otherwise → use a default `buffer(poly, 500)` as the reference
+
+#### 6.3 CSV columns (exactly as produced)
+
+- `ID` — running index starting at 1
+- `Name` — from `properties.name` if present, otherwise `Point_#`
+- `Data_Source` — indicates the input set used (clipped vs raw)
+- `Distance_to_Polygon` — rounded to 2 decimals
+- `Inside_Buffer (<source>)` — `Yes`/`No` (header includes the reference source)
+
+---
+
+### Task 7: High-Speed Search (STRtree Indexing) [NEW!]
+
+Demonstrates a performance comparison between:
+
+1. **Standard search (benchmark):** loops through all features and repeatedly calls `nearest(pt, feature_geometry)`
+2. **Optimized search:** calls `nearest_optimized(pt, fc_m)` using `STRtree`
+
+Outputs:
+
+- nearest distance found (meters)
+- time comparison (standard vs indexed, milliseconds)
+- an “Optimization Factor” (how many times faster)
+
+> Note: This is a demo benchmark; the standard search intentionally loops through the full dataset to simulate heavier work.
+
+---
+
+### Task 8: Extract Centroids/Envelopes [NEW!]
+
+Derives geometric features for each polygon in the dataset:
+
+- centroid (Point) with `properties.type = "Centroid"`
+- envelope / bounding rectangle (Polygon) with `properties.type = "Envelope"`
+
+Output:
+
+- GeoJSON: `out/geo_features.geojson` (FeatureCollection of derived features)
+
+Tip: Run Task 8 and then Task 5 to visualize these derived features as an overlay layer.
 
 ---
 
@@ -259,11 +347,10 @@ Reads a GeoJSON file and returns a Python `dict`. Raises `FileNotFoundError` if 
 Writes a GeoJSON `dict` to disk (UTF‑8, indent=2). Creates parent directories automatically.
 
 #### `write_csv(data_list, path)`
-Writes a list of dictionaries to a CSV file.
+Writes a list of dictionaries to a CSV file (UTF‑8).
 
 - If `data_list` is empty, prints a message and returns.
-- Uses the keys of the first dictionary as header fields.
-- Writes using UTF‑8.
+- Uses the keys of the first dictionary as CSV headers.
 
 ---
 
@@ -286,10 +373,10 @@ Uses `pyproj.Transformer` with `always_xy=True`.
 Buffers a geometry by `dist_m` (units depend on CRS; meters in metric CRS). Returns a GeoJSON geometry dict.
 
 #### `clip(feature_or_fc, clipper_geom)`
-Clips input using a polygon clipper.
+Clips input using a polygon clipper (intersection).
 
 - Input `FeatureCollection` → returns a clipped FeatureCollection (may be empty)
-- Input `Feature` → returns a FeatureCollection (for consistent output type)
+- Input `Feature` → returns a FeatureCollection (consistent output type)
 - Input geometry dict → returns an intersection geometry dict
 
 #### `nearest(a_geom, b_geom)`
@@ -302,7 +389,19 @@ Returns the area (units depend on CRS; square meters in metric CRS).
 Returns length/perimeter (units depend on CRS; meters in metric CRS).
 
 #### `is_contained(container_geom, content_geom)`
-Returns a boolean indicating whether `container_geom` contains `content_geom`.
+Returns a boolean indicating whether `container_geom` strictly contains `content_geom`.
+
+#### `nearest_optimized(search_geom, target_collection)` (NEW)
+Builds an `STRtree` index from the target FeatureCollection and returns:
+
+- `distance: float`
+- `nearest_geom: GeoJSON geometry dict`
+
+#### `get_centroid(geometry)` (NEW)
+Returns centroid as a GeoJSON Point geometry dict.
+
+#### `get_envelope(geometry)` (NEW)
+Returns envelope (minimum bounding rectangle) as a GeoJSON Polygon geometry dict.
 
 ---
 
@@ -311,9 +410,12 @@ Returns a boolean indicating whether `container_geom` contains `content_geom`.
 #### `plot_features(feature_collection, title="GeoJSON Plot", output_path="out/plot.png")`
 Saves a PNG plot for a FeatureCollection.
 
-- Supports `Point` and `Polygon`.
-- If a polygon has `properties.type == "Original"`, it is emphasized with a dashed outline (to match `demo.py` behavior).
-- Axis labels indicate EPSG:3857 meter-based coordinates.
+- Supports `Point` and `Polygon` geometries.
+- Adds grid lines, equal aspect ratio, and EPSG:3857 meter-based axis labels.
+- Applies special styles based on `feature.properties.type`:
+  - `Original` → black dashed outline
+  - `Centroid` → green point
+  - `Envelope` → orange dash-dot outline
 
 ---
 
