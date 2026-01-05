@@ -80,3 +80,27 @@ def nearest(a_geom: JsonDict, b_geom: JsonDict) -> Tuple[float, JsonDict, JsonDi
 
     pA, pB = nearest_points(A, B)
     return (pA.distance(pB), mapping(pA), mapping(pB))
+
+# --- 新增功能: 几何属性计算 ---
+
+def get_area(geometry: JsonDict) -> float:
+    """
+    计算几何体的面积。
+    注意：输入数据必须是投影坐标系（如米），否则计算结果无意义。
+    """
+    return shape(geometry).area
+
+def get_length(geometry: JsonDict) -> float:
+    """
+    计算几何体的长度（对于多边形则是周长）。
+    注意：输入数据必须是投影坐标系（如米）。
+    """
+    return shape(geometry).length
+
+# --- 新增功能: 空间关系判断 ---
+
+def is_contained(container_geom: JsonDict, content_geom: JsonDict) -> bool:
+    """
+    判断 content_geom (如点) 是否完全在 container_geom (如多边形) 内部。
+    """
+    return shape(container_geom).contains(shape(content_geom))
