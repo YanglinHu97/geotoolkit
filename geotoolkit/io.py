@@ -14,38 +14,46 @@ PathLike = Union[str, Path]
 def read_geojson(path: PathLike) -> JsonDict:
     """Read a GeoJSON file and return it as a Python dictionary."""
     p = Path(path)
+    # Verify file existence to prevent runtime crashes later
     if not p.exists():
         raise FileNotFoundError(f"GeoJSON not found: {p}")
+    
+    # Open with UTF-8 encoding to handle special characters correctly
     with p.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 def write_geojson(obj: JsonDict, path: PathLike) -> None:
     """Write a GeoJSON dictionary to disk."""
     p = Path(path)
+    # Ensure the directory exists (e.g., create 'out/' if missing)
     p.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Write file with pretty printing (indent=2) for readability
+    # ensure_ascii=False allows writing non-English characters properly
     with p.open("w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
 
 
 def write_csv(data_list, path):
     """
-    将字典列表写入 CSV 文件
-    :param data_list: 包含字典的列表，例如 [{'ID':1, 'Val':10}, {'ID':2, 'Val':20}]
-    :param path: 保存路径
+    Write a list of dictionaries to a CSV file.
+    :param data_list: List containing dictionaries, e.g., [{'ID':1, 'Val':10}, {'ID':2, 'Val':20}]
+    :param path: Save path
     """
+    # Safety check: do nothing if the list is empty
     if not data_list:
-        print("没有数据需要写入 CSV")
+        print("No data to write to CSV")
         return
     
-    # 获取表头 (取第一行数据的 keys)
+    # Extract headers dynamically from the keys of the first dictionary
     keys = data_list[0].keys()
     
     try:
-        # newline='' 是为了防止在 Windows 下出现空行
+        # newline='' is crucial on Windows to prevent blank lines between rows
         with open(path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=keys)
-            writer.writeheader() # 写入表头
-            writer.writerows(data_list) # 写入数据
-        print(f" -> CSV 文件已保存: {path}")
+            writer.writeheader() # Write the header row (column names)
+            writer.writerows(data_list) # Write all data rows
+        print(f" -> CSV file saved: {path}")
     except Exception as e:
-        print(f" [错误] 写入 CSV 失败: {e}")
+        print(f" [Error] Failed to write CSV: {e}")
