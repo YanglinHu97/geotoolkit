@@ -64,67 +64,71 @@ def task_analysis():
     print(f" -> 原始点是否在缓冲区内: {is_inside}")
 
 def task_viz():
-    """功能 5: 可视化结果 (超级智能版：支持裁剪和缓冲区文件)"""
+    """功能 5: 可视化结果 (逻辑修复版)"""
     print("\n>>> 正在执行 [5] 生成可视化图表...")
     
     viz_features = []
-    title = "Visualization"
+    title = ""
     
     # 路径定义
     path_clip = "out/clipped_features.geojson"
-    path_buf = "out/buffer_500m.geojson" # 功能 1 的输出文件
+    path_buf = "out/buffer_500m.geojson"
     
-    # --- 逻辑判断开始 ---
+    # --- 逻辑判断 ---
     
-    # 1. 优先检查：是否有裁剪结果 (功能 2)
+    # 1. 优先找裁剪结果
     if os.path.exists(path_clip):
-        print(f" -> [优先展示] 检测到裁剪结果: {path_clip}")
+        print(f" -> [展示] 检测到裁剪结果: {path_clip}")
         try:
             with open(path_clip, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 if "features" in data:
                     viz_features.extend(data["features"])
                 title = "Clipped Features Result"
-        except Exception as e:
-            print(f" [警告] 读取失败: {e}")
+        except Exception:
+            pass
 
-    # 2. 其次检查：是否有缓冲区文件 (功能 1)
-    # 注意：使用 elif，意味着如果上面展示了裁剪，这里就不重复展示缓冲区了，避免图形重叠太乱
+    # 2. 如果没裁剪，找缓冲区
     elif os.path.exists(path_buf):
         print(f" -> [展示] 检测到缓冲区文件: {path_buf}")
         try:
             with open(path_buf, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                # buffer 函数返回的是 Geometry，read_geojson 读取后也是单纯的 dict
-                # 如果是直接由 write_geojson 写的，通常是 GeoJSON 结构
-                # 无论它是 FeatureCollection 还是 Geometry，我们都做个兼容处理
-                
-                if "features" in data: # 如果是 FeatureCollection
+                # 兼容 FeatureCollection 或 单个 Geometry
+                if "features" in data:
                     viz_features.extend(data["features"])
-                elif "type" in data and data["type"] == "Polygon": # 如果纯几何
+                elif "type" in data and data["type"] == "Polygon":
                      viz_features.append({
                         "type": "Feature",
-                        "properties": {"source": "Task 1 File"},
+                        "properties": {"type": "Buffer"},
                         "geometry": data
                     })
-                title = "Buffer Analysis (From Task 1)"
-        except Exception as e:
-             print(f" [警告] 读取失败: {e}")
+                title = "Buffer Analysis Result (500m)"
+        except Exception:
+            pass
 
-    # 3. 如果啥都没找到 (用户只运行了 5)
+    # 3. 【新逻辑】如果啥都没跑，只展示原始数据
     else:
-        print(" -> 未找到任何历史结果，正在实时生成预览...")
-        buf_geom = buffer(poly, 500)
-        viz_features.append({
-            "type": "Feature",
-            "properties": {"source": "On-the-fly"},
-            "geometry": buf_geom
-        })
-        title = "Buffer Preview (Default)"
+        print(" -> 未找到处理结果，展示原始数据 (Original Data)...")
+        # 直接把 fc_m (原始数据) 里的所有东西拿来画
+        viz_features.extend(fc_m["features"])
+        title = "Original Data (No Processing)"
 
-    # --- 公共部分：总是加上原始点 ---
-    points = [f for f in fc_m["features"] if f["geometry"]["type"] == "Point"]
-    viz_features.extend(points)
+    # --- 总是加上原始点和原始多边形作为背景参考 (可选，为了对比) ---
+    # 如果现在展示的是缓冲区，我们把原始多边形也画上去（用空心线），方便对比 500m 的差距
+    if "Buffer" in title:
+        # 提取原始多边形，给个特殊属性让绘图函数知道
+        original_poly_feature = {
+            "type": "Feature", 
+            "geometry": poly, 
+            "properties": {"type": "Original"}
+        }
+        viz_features.append(original_poly_feature)
+        
+    # 如果展示的是缓冲区，把原始点也加上去作为参考
+    if "Buffer" in title or "Clipped" in title:
+         points = [f for f in fc_m["features"] if f["geometry"]["type"] == "Point"]
+         viz_features.extend(points)
 
     # --- 绘图 ---
     viz_data = {
