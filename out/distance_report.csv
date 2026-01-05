@@ -1,0 +1,2 @@
+ID,Name,Data_Source,Distance_to_Polygon,Inside_Buffer (文件读取 (Task 1))
+1,sample_point,裁剪后数据 (Task 2),0.0,Yes
