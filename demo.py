@@ -13,9 +13,18 @@ from geotoolkit.analysis import (
 )
 
 from geotoolkit.viz import plot_features
-from geotoolkit.query import tag_points_within, filter_points_within
+# [NEW] Import the new radius filter function
+from geotoolkit.query import tag_points_within, filter_points_within, filter_points_by_distance
 from geotoolkit.knn import knn_points
 from shapely.geometry import shape
+
+# [NEW] Import World Cities Data safely
+try:
+    from geotoolkit.data.world_cities import WORLD_CITIES
+    HAS_CITIES = True
+except ImportError:
+    HAS_CITIES = False
+    WORLD_CITIES = {}
 
 # [NEW] Import raster module safely
 try:
@@ -50,7 +59,27 @@ except Exception as e:
     sys.exit(1)
 
 # ==========================================
-# 2. Define Function Tasks
+# 2. Helper Functions
+# ==========================================
+
+def convert_cities_to_geojson(cities_dict):
+    """
+    Helper: Convert the dictionary {'Name': (lat, lon)} to a GeoJSON FeatureCollection.
+    """
+    features = []
+    for name, (lat, lon) in cities_dict.items():
+        features.append({
+            "type": "Feature",
+            "properties": {"name": name}, # Important: Store the real city name here
+            "geometry": {
+                "type": "Point",
+                "coordinates": [lon, lat] # GeoJSON is [lon, lat]
+            }
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+# ==========================================
+# 3. Define Function Tasks
 # ==========================================
 
 def task_buffer():
@@ -185,12 +214,32 @@ def task_viz():
     path_geo = "out/geo_features.geojson"
     # [NEW] Path for sampled raster data
     path_sampled = "out/sampled_points.geojson"
+    # [NEW] Path for Spatial Query Result (Task 13)
+    path_query = "out/query_radius_result.geojson"
     
-    # --- Layer 1: Base Map (Result of Task 1 or 2) ---
+    # --- Layer 1: Base Map (Result of Task 1 or 2 or 13) ---
     has_processed_data = False
     
-    # Priority 1: Clipped Results
-    if os.path.exists(path_clip):
+    # Priority 0: Spatial Query Results (Task 13) - Highest Priority for Viz
+    if os.path.exists(path_query):
+        print(f" -> [Display] Detected Spatial Query result: {path_query}")
+        try:
+            with open(path_query, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if "features" in data: 
+                    # Tag them as sampled/special for blue color
+                    for ft in data["features"]:
+                         # We use existing visualization logic for blue points
+                         ft["properties"]["_viz_type"] = "SampledPoint" 
+                         # Use distance as the value to display
+                         ft["properties"]["raster_value"] = ft["properties"].get("distance_to_center", 0)
+                    viz_features.extend(data["features"])
+                title_parts.append("Spatial Query")
+                has_processed_data = True
+        except Exception: pass
+
+    # Priority 1: Clipped Results (Only if Query not shown)
+    if os.path.exists(path_clip) and not has_processed_data:
         print(f" -> [Display] Detected clip result: {path_clip}")
         try:
             with open(path_clip, 'r', encoding='utf-8') as f:
@@ -200,7 +249,7 @@ def task_viz():
                 has_processed_data = True
         except Exception: pass
 
-    # Priority 2: Buffer Results (if no clip)
+    # Priority 2: Buffer Results (if no clip/query)
     elif os.path.exists(path_buf):
         print(f" -> [Display] Detected buffer file: {path_buf}")
         try:
@@ -214,9 +263,14 @@ def task_viz():
         except Exception: pass
 
     else:
-        print(" -> No processing results found, displaying original data...")
-        viz_features.extend(fc_m["features"])
-        title_parts.append("Original Data")
+        # If query exists, we still want original context polygons (if they exist)
+        if not has_processed_data:
+            print(" -> No processing results found, displaying original data...")
+            viz_features.extend(fc_m["features"])
+            title_parts.append("Original Data")
+        elif os.path.exists(path_query):
+             # If showing query results, add original polygons for context
+             viz_features.extend([f for f in fc_m["features"] if f["geometry"]["type"] == "Polygon"])
 
     # --- Layer 2: Geometric Features (Result of Task 8) ---
     # This acts as an overlay regardless of what base map is shown
@@ -231,7 +285,8 @@ def task_viz():
         except Exception: pass
         
     # [NEW] --- Layer 3: Raster Sampled Points (Result of Task 12) ---
-    if os.path.exists(path_sampled):
+    # Only show if we aren't already showing the Query Results (to avoid clutter)
+    if os.path.exists(path_sampled) and not os.path.exists(path_query):
         print(f" -> [Linkage] Detected Raster Sampled Points")
         try:
             with open(path_sampled, 'r', encoding='utf-8') as f:
@@ -243,8 +298,8 @@ def task_viz():
                     viz_features.extend(data["features"])
                 title_parts.append("+ Raster Values")
         except Exception: pass
-    elif has_processed_data:
-         # Only show original points if we are NOT showing sampled points
+    elif has_processed_data and not os.path.exists(path_query):
+         # Only show original points if we are NOT showing sampled points or query points
          points = [f for f in fc_m["features"] if f["geometry"]["type"] == "Point"]
          viz_features.extend(points)
 
@@ -527,6 +582,118 @@ def task_raster_sampling():
         
     print(f" -> Sampling complete. Result saved to {out_path}")
 
+# [NEW] Task 13 Implementation (Supports Real City Data)
+def task_spatial_query():
+    """Task 13: Spatial Buffer Analysis (Radius Search)"""
+    print("\n>>> Executing [13] Spatial Buffer Analysis (Radius Search)...")
+    
+    # 1. Select Data Source
+    print(" -> Select Data Source:")
+    print("    [1] Generated Random Points (Abstract Data)")
+    print("    [2] Real World Cities Database (Real Data)")
+    
+    source_choice = input(" -> Enter choice (1/2, default 1): ").strip()
+    
+    source_fc = None
+    
+    if source_choice == '2':
+        if not HAS_CITIES:
+            print(" [Error] World cities database not found. Falling back to generated points.")
+            source_choice = '1'
+        else:
+            print(f" -> Loading {len(WORLD_CITIES)} cities from database...")
+            # Convert dictionary to GeoJSON
+            raw_cities = convert_cities_to_geojson(WORLD_CITIES)
+            # Project to meters (EPSG:3857) so distance calculations work properly
+            print(" -> Reprojecting data to Metric System (EPSG:3857)...")
+            source_fc = to_epsg(raw_cities, 4326, 3857)
+            print(" -> Data ready.")
+
+    if source_choice != '2':
+        # Fallback or User Choice 1
+        input_path = "data/generated_points.geojson"
+        if os.path.exists(input_path):
+            print(" -> Using large dataset: generated_points.geojson")
+            source_fc = read_geojson(input_path)
+        else:
+            print(" -> Using standard dataset: sample.geojson")
+            source_fc = fc_m
+
+    # 2. Determine Center Point
+    print("\n -> Define Search Center:")
+    # Default centroid
+    poly_centroid = get_centroid(poly)
+    cx, cy = poly_centroid["coordinates"]
+    
+    print(f"    Default (Polygon Centroid): X={cx:.2f}, Y={cy:.2f}")
+    
+    # [NEW] Allow searching near a specific city if using City Database
+    if source_choice == '2':
+         target_city = input("    Or enter a City Name to use as center (e.g. 'Paris, FR'): ").strip()
+         if target_city:
+             # Find city in the projected list
+             found = False
+             for f in source_fc["features"]:
+                 if target_city.lower() in f["properties"]["name"].lower():
+                     cx, cy = f["geometry"]["coordinates"]
+                     print(f"    ✓ Center locked on: {f['properties']['name']} ({cx:.1f}, {cy:.1f})")
+                     found = True
+                     break
+             if not found:
+                 print(f"    [!] '{target_city}' not found. Using default centroid.")
+
+    # Manual override option
+    use_manual = input("    Enter 'm' to input manual coordinates, or [Enter] to continue: ").strip().lower()
+    if use_manual == 'm':
+        try:
+            cx = float(input("    Enter Center X: "))
+            cy = float(input("    Enter Center Y: "))
+        except ValueError:
+            print(" [!] Invalid coordinates. Reverting.")
+    
+    # 3. Determine Radius
+    try:
+        # Ask for km if using cities (more realistic), convert to meters
+        if source_choice == '2':
+             r_input = input(" -> Enter Radius in Kilometers (km): ").strip()
+             radius = float(r_input) * 1000.0 if r_input else 500000.0 # Default 500km
+        else:
+             r_input = input(" -> Enter Radius in Meters (default 2000): ").strip()
+             radius = float(r_input) if r_input else 2000.0
+    except ValueError:
+        radius = 2000.0
+        
+    print(f"\n -> Querying points within {radius/1000:.2f} km of center...")
+    
+    # 4. Execute Logic
+    t0 = time.time()
+    result_fc = filter_points_by_distance(source_fc, (cx, cy), radius, use_index=True)
+    t1 = time.time()
+    
+    count = len(result_fc["features"])
+    print(f" -> Query completed in {(t1-t0):.4f} seconds.")
+    print(f" -> Found {count} locations within range.\n")
+    
+    # 5. Display specific names (Addressing your problem)
+    if count > 0:
+        print(f" {'LOCATION NAME':<35} | {'DISTANCE (km)':<15}")
+        print("-" * 55)
+        for i, f in enumerate(result_fc["features"]):
+            if i >= 10: 
+                print(f" ... and {count - 10} more.")
+                break
+            # Try to get 'name', default to 'Point_ID' if unavailable
+            name = f["properties"].get("name", f"Point_{i+1}")
+            dist_m = f["properties"].get("distance_to_center", 0)
+            print(f" {name:<35} | {dist_m/1000:.2f} km")
+            
+    # 6. Save Results
+    out_path = "out/query_radius_result.geojson"
+    write_geojson(result_fc, out_path)
+    print(f"\n -> Results saved to {out_path}")
+    print(" -> (Tip: Run Task [5] to visualize or [6] to export report)")
+
+
 def task_report():
     """Task 6: Generate Excel/CSV Report (Linked Mode)"""
     print("\n>>> Executing [6] Generating Distance Report...")
@@ -537,14 +704,25 @@ def task_report():
     # 1. Determine Data Source (Which points to analyze?)
     # ==========================================
     path_clip = "out/clipped_features.geojson"
-    # [NEW] Check for Sampled Points
     path_sampled = "out/sampled_points.geojson"
+    # [NEW] Path for Spatial Query Result
+    path_query = "out/query_radius_result.geojson"
     
     target_points = []
     data_source_desc = ""
 
-    # Check for Raster Sampling first (richest data)
-    if os.path.exists(path_sampled):
+    # Priority 1: Check for Spatial Query (Task 13) - Most specific analysis
+    if os.path.exists(path_query):
+        print(f" -> [Linked] Analyzing Spatial Query Results (Radius Search)")
+        try:
+             with open(path_query, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if "features" in data: target_points = data["features"]
+             data_source_desc = "Radius Search Result"
+        except: pass
+
+    # Priority 2: Check for Raster Sampling (Task 12)
+    elif os.path.exists(path_sampled):
         print(f" -> [Linked] Analyzing Raster Sampled Points")
         try:
             with open(path_sampled, 'r', encoding='utf-8') as f:
@@ -553,7 +731,7 @@ def task_report():
             data_source_desc = "Raster Sampled"
         except: pass
     
-    # Check if Task 2 (Clip) was run.
+    # Priority 3: Check if Task 2 (Clip) was run.
     elif os.path.exists(path_clip):
         print(f" -> [Linked] Detected clip result, analyzing only remaining features")
         try:
@@ -622,6 +800,10 @@ def task_report():
         # [NEW] Add Raster Value if present
         if "raster_value" in props:
             row["Raster_Value"] = round(props["raster_value"], 2)
+
+        # [NEW] Add Distance to Center if present (from Task 13)
+        if "distance_to_center" in props:
+            row["Radius_Dist"] = round(props["distance_to_center"], 2)
             
         report_data.append(row)
         
@@ -635,7 +817,7 @@ def task_report():
             pass
 
 # ==========================================
-# 3. Menu Configuration
+# 4. Menu Configuration
 # ==========================================
 
 MENU = {
@@ -651,10 +833,11 @@ MENU = {
     "10": ("Geometry Summary (bbox / centroid)", task_geometry_summary),
     "11": ("KNN Top-K Nearest Points", task_knn),
     "12": ("Raster Point Sampling [NEW!]", task_raster_sampling),
+    "13": ("Spatial Buffer Analysis (Radius Search) [NEW!]", task_spatial_query),
 }
 
 # ==========================================
-# 4. Main Loop Logic
+# 5. Main Loop Logic
 # ==========================================
 
 if __name__ == "__main__":
