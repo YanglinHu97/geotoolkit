@@ -99,7 +99,7 @@ Perform common geometric operations directly on geometries with the help of `geo
 To install the `geotoolkit` library and its dependencies, simply run the following command in your terminal:
 
 ```bash
-pip install geotoolkit
+pip install shapely matplotlib rasterio pyproj numpy geotoolkit
 ```
 
 This will install the latest stable version of `geotoolkit` along with its required dependencies.
@@ -190,17 +190,38 @@ The project is organized as follows:
 ```plaintext
 geotoolkit/
 │
-├── geotoolkit/              # Core source code for the library
+├── geotoolkit/
+│   ├── data/
+│      ├── world_cities.py
+│   ├── io.py
+│   ├── project.py
+│   ├── analysis.py
+│   ├── viz.py
+│   ├── query.py
+│   ├── knn.py
+│   ├── raster.py              # optional: requires rasterio + numpy
+│   └── __init__.py
 │
-├── data/                    # Example data files (optional)
+├── data/
+│   ├── sample.geojson
+│   ├── generated_points.geojson
+│   ├── search_points.geojson
+│   └── sample_dem.tif          # used by demo task [12]
 │
-├── demo.py                  # A script that demonstrates the usage of the library
-├── README.md                # Project documentation (this file)
-├── setup.cfg                # Setup configuration file for the project
-├── pyproject.toml           # Project metadata and build configuration
-├── .gitignore               # Git ignore file for version control
-├── tests/                   # Unit tests for the library
-└── geotoolkit.egg-info/     # Metadata for Python packaging
+├── out/                         # generated outputs (created automatically by demo.py)
+│
+├── tests/
+│   ├── test_project.py
+│   ├── test_analysis.py
+│   ├── test_query.py
+│   ├── test_knn.py
+│   ├── test_practice_data.py
+│   └── test_raster.py           # skipped if rasterio not installed
+│
+├── demo.py
+├── README.md
+├── setup.cfg
+└── pyproject.toml
 ```
 
 ---
