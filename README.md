@@ -90,7 +90,7 @@ geotoolkit/
 │   ├── io.py
 │   ├── project.py
 │   ├── analysis.py
-│   ├── utils.py (optional)
+│   ├── viz.py
 │   └── __init__.py
 │
 ├── data/
