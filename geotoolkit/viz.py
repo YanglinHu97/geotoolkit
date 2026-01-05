@@ -11,15 +11,22 @@ def plot_features(feature_collection, title="GeoJSON Plot", output_path="out/plo
         # Convert GeoJSON feature to Shapely geometry for easy coordinate extraction
         geom = shape(feature["geometry"])
         geom_type = geom.geom_type
-        # Extract properties to check for custom flags (like 'Original' or 'Centroid')
+        # Extract properties to check for custom flags
         props = feature.get("properties", {})
         feat_type = props.get("type", "")
+        viz_type = props.get("_viz_type", "") # [NEW] Special internal flag for visualization style
         
         # Styling logic based on geometry type and properties
         if geom_type == 'Point':
             if feat_type == "Centroid":
-                # [NEW] Centroids: Green dots, slightly larger
+                # Centroids: Green dots
                 ax.plot(geom.x, geom.y, 'go', markersize=8, label='Centroid', zorder=10)
+            elif viz_type == "SampledPoint":
+                # [NEW] Raster Sampled Points: Blue dots with text value
+                ax.plot(geom.x, geom.y, 'bo', markersize=6, label='Sampled Value', zorder=6)
+                val = props.get("raster_value", 0)
+                # Annotate the value next to the point
+                ax.text(geom.x + 20, geom.y + 20, f"{val:.1f}", fontsize=9, color='blue', zorder=7)
             else:
                 # Standard Points: Red dots
                 ax.plot(geom.x, geom.y, 'ro', markersize=6, label='Point', zorder=5)
@@ -32,7 +39,7 @@ def plot_features(feature_collection, title="GeoJSON Plot", output_path="out/plo
                 ax.plot(x, y, 'k--', linewidth=1.5, label='Original Polygon')
             
             elif feat_type == "Envelope":
-                # [NEW] Envelope: Orange dash-dot line, no fill
+                # Envelope: Orange dash-dot line
                 ax.plot(x, y, color='orange', linestyle='-.', linewidth=2, label='Envelope', zorder=4)
                 
             else:

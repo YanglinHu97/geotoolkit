@@ -1,0 +1,19 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "sample_point",
+        "raster_value": 54.11698913574219
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          2011387.3513473428,
+          8251904.234165725
+        ]
+      }
+    }
+  ]
+}
