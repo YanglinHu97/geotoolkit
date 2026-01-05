@@ -1,9 +1,10 @@
 import sys
 import os
+import json  # <--- 之前缺少的工具库，现在加上了
+import time
 from geotoolkit.io import read_geojson, write_geojson
 from geotoolkit.project import to_epsg
 from geotoolkit.analysis import buffer, clip, nearest, get_area, get_length, is_contained
-# --- [新增] 引入可视化模块 ---
 from geotoolkit.viz import plot_features
 
 # ==========================================
@@ -46,7 +47,6 @@ def task_clip():
     clipped = clip(fc_m, clipper)
     write_geojson(clipped, "out/clipped_features.geojson")
     print(" -> 裁剪完成，结果保存至 out/clipped_features.geojson")
-    return clipped
 
 def task_nearest():
     """功能 3: 计算最近距离"""
@@ -64,57 +64,82 @@ def task_analysis():
     print(f" -> 原始点是否在缓冲区内: {is_inside}")
 
 def task_viz():
-    """功能 5: 可视化结果 (智能版：优先展示裁剪结果)"""
+    """功能 5: 可视化结果 (超级智能版：支持裁剪和缓冲区文件)"""
     print("\n>>> 正在执行 [5] 生成可视化图表...")
     
     viz_features = []
     title = "Visualization"
     
-    # --- 1. 尝试加载裁剪后的结果 (Task 2 的产物) ---
-    clip_path = "out/clipped_features.geojson"
-    if os.path.exists(clip_path):
-        print(f" -> 检测到裁剪结果文件: {clip_path}")
+    # 路径定义
+    path_clip = "out/clipped_features.geojson"
+    path_buf = "out/buffer_500m.geojson" # 功能 1 的输出文件
+    
+    # --- 逻辑判断开始 ---
+    
+    # 1. 优先检查：是否有裁剪结果 (功能 2)
+    if os.path.exists(path_clip):
+        print(f" -> [优先展示] 检测到裁剪结果: {path_clip}")
         try:
-            with open(clip_path, 'r', encoding='utf-8') as f:
-                clip_data = json.load(f)
-                # 给裁剪结果加个特殊的颜色属性（可选，但在 plot_features 里如果能处理更好）
-                viz_features.extend(clip_data.get("features", []))
+            with open(path_clip, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if "features" in data:
+                    viz_features.extend(data["features"])
                 title = "Clipped Features Result"
         except Exception as e:
-            print(f" [警告] 读取裁剪文件失败: {e}")
+            print(f" [警告] 读取失败: {e}")
+
+    # 2. 其次检查：是否有缓冲区文件 (功能 1)
+    # 注意：使用 elif，意味着如果上面展示了裁剪，这里就不重复展示缓冲区了，避免图形重叠太乱
+    elif os.path.exists(path_buf):
+        print(f" -> [展示] 检测到缓冲区文件: {path_buf}")
+        try:
+            with open(path_buf, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # buffer 函数返回的是 Geometry，read_geojson 读取后也是单纯的 dict
+                # 如果是直接由 write_geojson 写的，通常是 GeoJSON 结构
+                # 无论它是 FeatureCollection 还是 Geometry，我们都做个兼容处理
+                
+                if "features" in data: # 如果是 FeatureCollection
+                    viz_features.extend(data["features"])
+                elif "type" in data and data["type"] == "Polygon": # 如果纯几何
+                     viz_features.append({
+                        "type": "Feature",
+                        "properties": {"source": "Task 1 File"},
+                        "geometry": data
+                    })
+                title = "Buffer Analysis (From Task 1)"
+        except Exception as e:
+             print(f" [警告] 读取失败: {e}")
+
+    # 3. 如果啥都没找到 (用户只运行了 5)
     else:
-        print(" -> 未找到裁剪结果，将展示默认缓冲区...")
-        # 如果没跑过 Task 2，就现场算一个缓冲区画出来
+        print(" -> 未找到任何历史结果，正在实时生成预览...")
         buf_geom = buffer(poly, 500)
         viz_features.append({
             "type": "Feature",
-            "properties": {"type": "Buffer"},
+            "properties": {"source": "On-the-fly"},
             "geometry": buf_geom
         })
-        title = "Buffer Analysis (Default)"
+        title = "Buffer Preview (Default)"
 
-    # --- 2. 总是把原始点加上，作为参考 ---
-    # 找到原始数据里的点
+    # --- 公共部分：总是加上原始点 ---
     points = [f for f in fc_m["features"] if f["geometry"]["type"] == "Point"]
     viz_features.extend(points)
 
-    # --- 3. 组合数据并绘图 ---
+    # --- 绘图 ---
     viz_data = {
         "type": "FeatureCollection",
         "features": viz_features
     }
     
     output_file = "out/visualization_result.png"
-    # 调用 viz.py 里的函数
-    plot_features(viz_data, title=title, output_path=output_file)
-    
-    # 自动打开
-    if sys.platform == "win32":
-        try:
+    try:
+        plot_features(viz_data, title=title, output_path=output_file)
+        if sys.platform == "win32":
             os.startfile(os.path.abspath(output_file))
-        except Exception:
-            pass
-        
+    except Exception as e:
+        print(f" [错误] 绘图失败: {e}")
+
 # ==========================================
 # 3. 菜单配置
 # ==========================================
@@ -124,7 +149,7 @@ MENU = {
     "2": ("裁剪要素 (Clip)", task_clip),
     "3": ("计算最近距离 (Nearest)", task_nearest),
     "4": ("几何属性检查 (Analysis)", task_analysis),
-    "5": ("可视化结果 (Visualize) [NEW!]", task_viz)
+    "5": ("可视化结果 (Visualize)", task_viz)
 }
 
 # ==========================================
