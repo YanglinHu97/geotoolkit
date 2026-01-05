@@ -2,81 +2,109 @@ import sys
 import os
 import json
 import time
-from geotoolkit.io import read_geojson, write_geojson, write_csv  # <--- [新增] 引入 write_csv
+from geotoolkit.io import read_geojson, write_geojson, write_csv
 from geotoolkit.project import to_epsg
 from geotoolkit.analysis import buffer, clip, nearest, get_area, get_length, is_contained
 from geotoolkit.viz import plot_features
 
 # ==========================================
-# 1. 全局准备阶段
+# 1. Global Preparation Stage
 # ==========================================
-print("正在初始化数据，请稍候...")
+print("Initializing data, please wait...")
 try:
+    # Ensure the output directory exists
     if not os.path.exists("out"):
         os.makedirs("out")
         
+    # Load the raw data (WGS84 Lat/Lon)
     fc = read_geojson("data/sample.geojson")
+    
+    # Project data to a metric system (EPSG:3857) so we can calculate distances in meters
     fc_m = to_epsg(fc, 4326, 3857)
     
+    # Extract the main Polygon and Point geometry for use in tasks
     poly = [f for f in fc_m["features"] if f["geometry"]["type"] == "Polygon"][0]["geometry"]
     pt = [f for f in fc_m["features"] if f["geometry"]["type"] == "Point"][0]["geometry"]
-    print("数据加载与转换完成。")
+    print("Data loading and transformation complete.")
 except Exception as e:
-    print(f"初始化失败: {e}")
+    # Exit if data loading fails (critical error)
+    print(f"Initialization failed: {e}")
     sys.exit(1)
 
 # ==========================================
-# 2. 定义功能函数
+# 2. Define Function Tasks
 # ==========================================
 
 def task_buffer():
-    """功能 1: 生成缓冲区"""
-    print("\n>>> 正在执行 [1] 缓冲区分析...")
+    """Task 1: Generate Buffer"""
+    print("\n>>> Executing [1] Buffer Analysis...")
     
-    # 简单的交互：允许用户输入距离
-    user_dist = input("请输入缓冲区距离 (米，默认500): ").strip()
+    # Simple interaction: allow user to input distance
+    user_dist = input("Enter buffer distance (meters, default 500): ").strip()
+    # Validate input: use 500 if input is not a number
     dist = float(user_dist) if user_dist.isdigit() else 500
     
+    # Perform buffer calculation
     buf = buffer(poly, dist)
+    
+    # Save result to file
     write_geojson(buf, "out/buffer_500m.geojson")
-    print(f" -> 已生成 {dist}米 缓冲区，保存至 out/buffer_500m.geojson")
-    print(f" -> 缓冲区面积: {get_area(buf):.2f} 平方米")
+    print(f" -> Generated {dist}m buffer, saved to out/buffer_500m.geojson")
+    
+    # Display the area of the new buffer
+    print(f" -> Buffer Area: {get_area(buf):.2f} sq. meters")
     return buf
 
 def task_clip():
-    """功能 2: 裁剪要素"""
-    print("\n>>> 正在执行 [2] 裁剪操作...")
+    """Task 2: Clip Features"""
+    print("\n>>> Executing [2] Clip Operation...")
+    
+    # Generate a temporary 500m buffer to use as the "cookie cutter"
     clipper = buffer(poly, 500) 
+    
+    # Clip the original features using the clipper
     clipped = clip(fc_m, clipper)
+    
+    # Save clipped results
     write_geojson(clipped, "out/clipped_features.geojson")
-    print(" -> 裁剪完成，结果保存至 out/clipped_features.geojson")
+    print(" -> Clipping complete, result saved to out/clipped_features.geojson")
 
 def task_nearest():
-    """功能 3: 计算最近距离"""
-    print("\n>>> 正在执行 [3] 计算最近距离...")
+    """Task 3: Calculate Nearest Distance"""
+    print("\n>>> Executing [3] Calculate Nearest Distance...")
+    # Calculate Euclidean distance between the point and the polygon
     dist, a, b = nearest(pt, poly)
-    print(f" -> 点到多边形的最近距离: {dist:.2f} 米")
+    print(f" -> Nearest distance from point to polygon: {dist:.2f} meters")
 
 def task_analysis():
-    """功能 4: 几何属性检查"""
-    print("\n>>> 正在执行 [4] 几何属性检查...")
+    """Task 4: Geometric Attribute Analysis"""
+    print("\n>>> Executing [4] Geometric Attribute Analysis...")
+    
+    # Create temporary geometry for analysis
     temp_buf = buffer(poly, 500)
+    
+    # Calculate perimeter
     perimeter = get_length(temp_buf)
+    
+    # Check if the point is strictly inside the buffer
     is_inside = is_contained(temp_buf, pt)
-    print(f" -> 缓冲区周长: {perimeter:.2f} 米")
-    print(f" -> 原始点是否在缓冲区内: {is_inside}")
+    
+    print(f" -> Buffer Perimeter: {perimeter:.2f} meters")
+    print(f" -> Is original point inside buffer: {is_inside}")
 
 def task_viz():
-    """功能 5: 可视化结果 (智能版)"""
-    print("\n>>> 正在执行 [5] 生成可视化图表...")
+    """Task 5: Visualize Results (Smart Mode)"""
+    print("\n>>> Executing [5] Generating Visualization...")
     
     viz_features = []
     title = ""
+    # Define paths to potential result files
     path_clip = "out/clipped_features.geojson"
     path_buf = "out/buffer_500m.geojson"
     
+    # Logic: Prioritize displaying Clipped results if they exist (Task 2)
     if os.path.exists(path_clip):
-        print(f" -> [展示] 检测到裁剪结果: {path_clip}")
+        print(f" -> [Display] Detected clip result: {path_clip}")
         try:
             with open(path_clip, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -84,117 +112,125 @@ def task_viz():
                 title = "Clipped Features Result"
         except Exception: pass
 
+    # If no clip result, check if Buffer result exists (Task 1)
     elif os.path.exists(path_buf):
-        print(f" -> [展示] 检测到缓冲区文件: {path_buf}")
+        print(f" -> [Display] Detected buffer file: {path_buf}")
         try:
             with open(path_buf, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 if "features" in data: viz_features.extend(data["features"])
                 elif "type" in data and data["type"] == "Polygon":
+                     # Wrap single geometry into a feature for plotting consistency
                      viz_features.append({"type": "Feature", "properties": {"type": "Buffer"}, "geometry": data})
                 title = "Buffer Analysis Result"
         except Exception: pass
 
+    # Fallback: Just show original data if no processing happened
     else:
-        print(" -> 未找到处理结果，展示原始数据...")
+        print(" -> No processing results found, displaying original data...")
         viz_features.extend(fc_m["features"])
         title = "Original Data (No Processing)"
 
+    # Add Context: Always add the original Polygon (outline) for comparison
     if "Buffer" in title:
         viz_features.append({"type": "Feature", "geometry": poly, "properties": {"type": "Original"}})
+        
+    # Add Context: Always add original Points
     if "Buffer" in title or "Clipped" in title:
          points = [f for f in fc_m["features"] if f["geometry"]["type"] == "Point"]
          viz_features.extend(points)
 
+    # Call the plotting function in viz.py
     output_file = "out/visualization_result.png"
     try:
         plot_features({"type": "FeatureCollection", "features": viz_features}, title=title, output_path=output_file)
+        # Automatically open the image on Windows
         if sys.platform == "win32": os.startfile(os.path.abspath(output_file))
     except Exception as e:
-        print(f" [错误] 绘图失败: {e}")
+        print(f" [Error] Plotting failed: {e}")
 
-# --- [新增] 功能 6: 生成报表 ---
 def task_report():
-    """功能 6: 生成 Excel/CSV 报表 (完全联动版)"""
-    print("\n>>> 正在执行 [6] 生成距离报表...")
+    """Task 6: Generate Excel/CSV Report (Linked Mode)"""
+    print("\n>>> Executing [6] Generating Distance Report...")
     
     report_data = []
     
     # ==========================================
-    # 1. 确定数据源 (我们要分析哪些点？)
+    # 1. Determine Data Source (Which points to analyze?)
     # ==========================================
     path_clip = "out/clipped_features.geojson"
     target_points = []
     data_source_desc = ""
 
+    # Check if Task 2 (Clip) was run. If so, analyze ONLY the clipped points.
     if os.path.exists(path_clip):
-        print(f" -> [联动] 检测到裁剪结果，将仅分析裁剪后的剩余要素")
+        print(f" -> [Linked] Detected clip result, analyzing only remaining features")
         try:
             with open(path_clip, 'r', encoding='utf-8') as f:
                 clip_data = json.load(f)
-                # 从裁剪结果中提取所有点
                 if "features" in clip_data:
+                    # Filter for Point geometries
                     target_points = [f for f in clip_data["features"] if f["geometry"]["type"] == "Point"]
-                data_source_desc = "裁剪后数据 (Task 2)"
+                data_source_desc = "Clipped Data (Task 2)"
         except Exception:
             pass
     
-    # 如果没找到裁剪文件，或者读取失败，就回退到使用原始数据
+    # Fallback: Use all points from original data
     if not target_points:
         if not os.path.exists(path_clip):
-            print(f" -> 未找到裁剪结果，将分析原始数据中的所有点")
-        data_source_desc = "原始数据 (Raw)"
+            print(f" -> Clip result not found, analyzing all points in original data")
+        data_source_desc = "Original Data (Raw)"
         target_points = [f for f in fc_m["features"] if f["geometry"]["type"] == "Point"]
 
     # ==========================================
-    # 2. 确定参考标准 (Inside/Outside 基于谁判断？)
+    # 2. Determine Reference Standard (Inside/Outside based on what?)
     # ==========================================
     path_buf = "out/buffer_500m.geojson"
     reference_geom = None
     ref_source_desc = ""
 
+    # Check if Task 1 (Buffer) was run. If so, use THAT buffer (e.g. 200m) for checking.
     if os.path.exists(path_buf):
         try:
             with open(path_buf, 'r', encoding='utf-8') as f:
                 buf_data = json.load(f)
-                # 兼容 FeatureCollection 或 Geometry
+                # Handle both Geometry and Feature structures
                 if "type" in buf_data and buf_data["type"] == "Polygon":
                     reference_geom = buf_data
                 elif "features" in buf_data:
                     reference_geom = buf_data["features"][0]["geometry"]
                 
-                ref_source_desc = "文件读取 (Task 1)"
-                # 只有在没有裁剪文件时才提示这个，避免啰嗦
+                ref_source_desc = "File Read (Task 1)"
                 if not os.path.exists(path_clip):
-                    print(f" -> [联动] 已加载缓冲区文件作为判断标准")
+                    print(f" -> [Linked] Buffer file loaded as judgment standard")
         except Exception:
             pass
             
-    # 如果没文件，用默认 500m
+    # Fallback: Calculate a default 500m buffer in memory
     if reference_geom is None:
         if not os.path.exists(path_buf):
-            # 只有在真的没文件时才提示默认
             pass 
         reference_geom = buffer(poly, 500)
-        ref_source_desc = "默认 500m"
+        ref_source_desc = "Default 500m"
 
     # ==========================================
-    # 3. 开始计算并生成报表
+    # 3. Start Calculation and Generation
     # ==========================================
-    print(f" -> 正在基于 [{data_source_desc}] 分析 {len(target_points)} 个点...")
+    print(f" -> Analyzing {len(target_points)} points based on [{data_source_desc}]...")
     
     for i, pt_feature in enumerate(target_points):
         geom = pt_feature["geometry"]
         
-        # 1. 计算距离 (始终计算到原始多边形的距离)
+        # 1. Calculate distance (Always to original polygon)
         d, _, _ = nearest(geom, poly)
         
-        # 2. 判断包含关系 (基于 reference_geom)
+        # 2. Determine containment (Based on reference_geom determined above)
         in_buf = is_contained(reference_geom, geom)
         
-        # 3. 获取点的名称属性 (如果数据里有 'name' 字段就用，没有就空着)
+        # 3. Get Name property
         p_name = pt_feature.get("properties", {}).get("name", f"Point_{i+1}")
 
+        # Construct the data row
         row = {
             "ID": i + 1,
             "Name": p_name,
@@ -204,9 +240,11 @@ def task_report():
         }
         report_data.append(row)
         
+    # Write the report to CSV
     csv_path = "out/distance_report.csv"
     write_csv(report_data, csv_path)
     
+    # Automatically open CSV on Windows
     if sys.platform == "win32":
         try:
             os.startfile(os.path.abspath(csv_path))
@@ -214,39 +252,43 @@ def task_report():
             pass
 
 # ==========================================
-# 3. 菜单配置
+# 3. Menu Configuration
 # ==========================================
 
 MENU = {
-    "1": ("生成缓冲区 (Buffer)", task_buffer),
-    "2": ("裁剪要素 (Clip)", task_clip),
-    "3": ("计算最近距离 (Nearest)", task_nearest),
-    "4": ("几何属性检查 (Analysis)", task_analysis),
-    "5": ("可视化结果 (Visualize)", task_viz),
-    "6": ("生成报表 (Export CSV) [NEW!]", task_report) # <--- 新增菜单项
+    "1": ("Generate Buffer", task_buffer),
+    "2": ("Clip Features", task_clip),
+    "3": ("Calculate Nearest Distance", task_nearest),
+    "4": ("Geometric Analysis", task_analysis),
+    "5": ("Visualize Results", task_viz),
+    "6": ("Generate Report (Export CSV)", task_report)
 }
 
 # ==========================================
-# 4. 主循环逻辑
+# 4. Main Loop Logic
 # ==========================================
 
 if __name__ == "__main__":
     while True:
         print("\n" + "="*40)
-        print("      GeoToolkit 交互式控制台")
+        print("      GeoToolkit Interactive Console")
         print("="*40)
+        # Dynamically display menu items
         for key, (desc, _) in MENU.items():
             print(f" [{key}] {desc}")
-        print(" [0] 退出程序 (Exit)")
+        print(" [0] Exit Program")
         print("-" * 40)
         
-        user_input = input("请输入功能序号 (多选如 '1,6'): ").strip()
+        # Get user input
+        user_input = input("Enter function ID (Multi-select e.g. '1,6'): ").strip()
         
+        # Handle Exit
         if user_input in ['0', 'q', 'exit', 'quit']:
-            print("正在退出程序...")
+            print("Exiting program...")
             break
         if not user_input: continue
 
+        # Parse input: Replace Chinese comma with English comma just in case, split by whitespace
         selection_keys = user_input.replace("，", ",").replace(",", " ").split()
         
         valid_choice = False
@@ -254,13 +296,15 @@ if __name__ == "__main__":
             if key in MENU:
                 valid_choice = True
                 try:
+                    # Execute the selected function
                     MENU[key][1]() 
                 except Exception as e:
-                    print(f"[错误] 执行出错: {e}")
+                    print(f"[Error] Execution failed: {e}")
             else:
-                if key != '0': print(f"\n[警告] 序号 '{key}' 无效。")
+                if key != '0': print(f"\n[Warning] Invalid ID '{key}'.")
         
+        # Pause after execution so user can read the output
         if valid_choice:
-            input("\n任务执行完毕，按 [回车键] 返回菜单...")
+            input("\nTask completed, press [Enter] to return to menu...")
             
-    print("再见！")
+    print("Goodbye!")
