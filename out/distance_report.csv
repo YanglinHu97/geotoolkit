@@ -1,2 +1,2 @@
-ID,Name,Data_Source,Distance_to_Polygon,Inside_Buffer (File Read (Task 1))
-1,sample_point,Clipped Data (Task 2),0.0,Yes
+ID,Name,Data_Source,Distance_to_Polygon,Inside_Buffer (File Read (Task 1)),Raster_Value
+1,sample_point,Raster Sampled,0.0,Yes,54.12

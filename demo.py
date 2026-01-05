@@ -17,6 +17,13 @@ from geotoolkit.query import tag_points_within, filter_points_within
 from geotoolkit.knn import knn_points
 from shapely.geometry import shape
 
+# [NEW] Import raster module safely
+try:
+    from geotoolkit.raster import sample_raster_at_points, generate_synthetic_raster
+    HAS_RASTERIO = True
+except ImportError:
+    HAS_RASTERIO = False
+
 
 # ==========================================
 # 1. Global Preparation Stage
@@ -176,6 +183,8 @@ def task_viz():
     path_clip = "out/clipped_features.geojson"
     path_buf = "out/buffer_500m.geojson"
     path_geo = "out/geo_features.geojson"
+    # [NEW] Path for sampled raster data
+    path_sampled = "out/sampled_points.geojson"
     
     # --- Layer 1: Base Map (Result of Task 1 or 2) ---
     has_processed_data = False
@@ -204,7 +213,6 @@ def task_viz():
                 has_processed_data = True
         except Exception: pass
 
-    # Fallback: Original Data
     else:
         print(" -> No processing results found, displaying original data...")
         viz_features.extend(fc_m["features"])
@@ -221,16 +229,29 @@ def task_viz():
                     viz_features.extend(geo_data["features"])
                 title_parts.append("+ Geometry")
         except Exception: pass
+        
+    # [NEW] --- Layer 3: Raster Sampled Points (Result of Task 12) ---
+    if os.path.exists(path_sampled):
+        print(f" -> [Linkage] Detected Raster Sampled Points")
+        try:
+            with open(path_sampled, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if "features" in data: 
+                    # Add specific tag so viz.py knows to label values
+                    for ft in data["features"]:
+                        ft["properties"]["_viz_type"] = "SampledPoint"
+                    viz_features.extend(data["features"])
+                title_parts.append("+ Raster Values")
+        except Exception: pass
+    elif has_processed_data:
+         # Only show original points if we are NOT showing sampled points
+         points = [f for f in fc_m["features"] if f["geometry"]["type"] == "Point"]
+         viz_features.extend(points)
 
     # --- Context Layers ---
     # Always add original Polygon outline for reference if we are showing Buffer/Clip
     if has_processed_data:
         viz_features.append({"type": "Feature", "geometry": poly, "properties": {"type": "Original"}})
-        
-    # Always add original Points for context
-    if has_processed_data:
-         points = [f for f in fc_m["features"] if f["geometry"]["type"] == "Point"]
-         viz_features.extend(points)
 
     # Plot
     final_title = " / ".join(title_parts)
@@ -468,9 +489,43 @@ def plot_knn(poly_geom, buf_geom, target_pt_geom, points_fc, output_path):
     plt.close()
     print(f" -> Visualization image saved to: {output_path}")
 
+def task_raster_sampling():
+    """Task 12: Raster Point Sampling (New Feature)"""
+    print("\n>>> Executing [12] Raster Point Sampling...")
+    if not HAS_RASTERIO:
+        print(" [Error] 'rasterio' is not installed. Please run: pip install rasterio")
+        return
 
-
-
+    raster_path = "data/sample_dem.tif"
+    
+    # 1. Check if raster exists, if not, generate synthetic one
+    if not os.path.exists(raster_path):
+        print(f" -> Raster not found at {raster_path}")
+        print(" -> Generating synthetic DEM based on sample data extent...")
+        
+        # Get extent of the entire dataset
+        polys = [shape(f["geometry"]) for f in fc_m["features"]]
+        minx = min(p.bounds[0] for p in polys)
+        miny = min(p.bounds[1] for p in polys)
+        maxx = max(p.bounds[2] for p in polys)
+        maxy = max(p.bounds[3] for p in polys)
+        
+        generate_synthetic_raster(raster_path, (minx, miny, maxx, maxy))
+        
+    # 2. Perform Sampling
+    print(f" -> Sampling values from {raster_path}...")
+    sampled_fc = sample_raster_at_points(fc_m, raster_path)
+    
+    # 3. Save Result
+    out_path = "out/sampled_points.geojson"
+    write_geojson(sampled_fc, out_path)
+    
+    # Print sample values to console
+    for f in sampled_fc["features"]:
+        val = f["properties"].get("raster_value")
+        print(f"    Point ID: {f['properties'].get('name', 'N/A')} -> Value: {val:.2f}")
+        
+    print(f" -> Sampling complete. Result saved to {out_path}")
 
 def task_report():
     """Task 6: Generate Excel/CSV Report (Linked Mode)"""
@@ -482,11 +537,24 @@ def task_report():
     # 1. Determine Data Source (Which points to analyze?)
     # ==========================================
     path_clip = "out/clipped_features.geojson"
+    # [NEW] Check for Sampled Points
+    path_sampled = "out/sampled_points.geojson"
+    
     target_points = []
     data_source_desc = ""
 
-    # Check if Task 2 (Clip) was run. If so, analyze ONLY the clipped points.
-    if os.path.exists(path_clip):
+    # Check for Raster Sampling first (richest data)
+    if os.path.exists(path_sampled):
+        print(f" -> [Linked] Analyzing Raster Sampled Points")
+        try:
+            with open(path_sampled, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if "features" in data: target_points = data["features"]
+            data_source_desc = "Raster Sampled"
+        except: pass
+    
+    # Check if Task 2 (Clip) was run.
+    elif os.path.exists(path_clip):
         print(f" -> [Linked] Detected clip result, analyzing only remaining features")
         try:
             with open(path_clip, 'r', encoding='utf-8') as f:
@@ -541,6 +609,7 @@ def task_report():
         d, _, _ = nearest(geom, poly)
         in_buf = is_contained(reference_geom, geom)
         p_name = pt_feature.get("properties", {}).get("name", f"Point_{i+1}")
+        props = pt_feature.get("properties", {})
 
         row = {
             "ID": i + 1,
@@ -549,6 +618,11 @@ def task_report():
             "Distance_to_Polygon": round(d, 2),
             f"Inside_Buffer ({ref_source_desc})": "Yes" if in_buf else "No"
         }
+        
+        # [NEW] Add Raster Value if present
+        if "raster_value" in props:
+            row["Raster_Value"] = round(props["raster_value"], 2)
+            
         report_data.append(row)
         
     csv_path = "out/distance_report.csv"
@@ -576,7 +650,7 @@ MENU = {
     "9": ("Batch Query (Generated Points) [Baseline vs Index]", task_batch),
     "10": ("Geometry Summary (bbox / centroid)", task_geometry_summary),
     "11": ("KNN Top-K Nearest Points", task_knn),
-
+    "12": ("Raster Point Sampling [NEW!]", task_raster_sampling),
 }
 
 # ==========================================
