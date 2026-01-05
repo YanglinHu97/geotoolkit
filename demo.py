@@ -1,6 +1,6 @@
 from geotoolkit.io import read_geojson, write_geojson
 from geotoolkit.project import to_epsg
-# 注意这里增加了 get_area, get_length, is_contained 的引用
+# add get_area, get_length, is_contained
 from geotoolkit.analysis import buffer, clip, nearest, get_area, get_length, is_contained
 
 # 1) Load sample data (WGS84)
@@ -24,10 +24,9 @@ write_geojson(clipped, "out/clipped_features.geojson")
 # 6) Compute nearest point distance (meters)
 dist, a, b = nearest(pt, poly)
 
-# --- 新增功能的演示代码 ---
-area_sqm = get_area(buf)           # 计算缓冲区面积
-perimeter_m = get_length(buf)      # 计算缓冲区周长
-check_inside = is_contained(buf, pt) # 判断原始点是否在缓冲区内
+area_sqm = get_area(buf)           # Calculate buffer area
+perimeter_m = get_length(buf)      # Calculate the perimeter of the buffer
+check_inside = is_contained(buf, pt) # Determine if the origin point is within the buffer zone
 
 print("--- Results ---")
 print("Buffered polygon saved to out/buffer_500m.geojson")
