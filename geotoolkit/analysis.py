@@ -97,7 +97,7 @@ def get_length(geometry: JsonDict) -> float:
     """
     return shape(geometry).length
 
-# --- 新增功能: 空间关系判断 ---
+# -- 新增功能: 空间关系判断 --
 
 def is_contained(container_geom: JsonDict, content_geom: JsonDict) -> bool:
     """
