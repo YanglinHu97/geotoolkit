@@ -5,7 +5,13 @@ import time
 import matplotlib.pyplot as plt
 from geotoolkit.io import read_geojson, write_geojson, write_csv
 from geotoolkit.project import to_epsg
-from geotoolkit.analysis import buffer, clip, nearest, get_area, get_length, is_contained, get_bbox, get_centroid
+from geotoolkit.analysis import (
+    buffer, clip, nearest,
+    get_area, get_length, is_contained,
+    nearest_optimized,
+    get_bbox, get_centroid, get_envelope
+)
+
 from geotoolkit.viz import plot_features
 from geotoolkit.query import tag_points_within, filter_points_within
 from geotoolkit.knn import knn_points
@@ -75,11 +81,14 @@ def task_clip():
     print(" -> Clipping complete, result saved to out/clipped_features.geojson")
 
 def task_nearest():
-    """Task 3: Calculate Nearest Distance"""
-    print("\n>>> Executing [3] Calculate Nearest Distance...")
+    """Task 3: Calculate Nearest Distance (Standard)"""
+    print("\n>>> Executing [3] Calculate Nearest Distance (Brute Force)...")
     # Calculate Euclidean distance between the point and the polygon
+    t0 = time.time()
     dist, a, b = nearest(pt, poly)
-    print(f" -> Nearest distance from point to polygon: {dist:.2f} meters")
+    t1 = time.time()
+    print(f" -> Nearest distance: {dist:.2f} meters")
+    print(f" -> Calculation time: {(t1-t0)*1000:.4f} ms")
 
 def task_analysis():
     """Task 4: Geometric Attribute Analysis"""
@@ -97,27 +106,92 @@ def task_analysis():
     print(f" -> Buffer Perimeter: {perimeter:.2f} meters")
     print(f" -> Is original point inside buffer: {is_inside}")
 
+def task_optimized_search():
+    """Task 7: High-Speed Search (Spatial Indexing)"""
+    print("\n>>> Executing [7] High-Speed Search (STRtree Indexing)...")
+    
+    # To demonstrate speed, let's search against the entire collection
+    # 1. Standard Search (Benchmark)
+    print(" -> Running standard search (for comparison)...")
+    t_start = time.time()
+    # Simulating a heavier load by looping through features manually
+    for f in fc_m["features"]:
+        nearest(pt, f["geometry"])
+    t_std = time.time() - t_start
+    
+    # 2. Optimized Search
+    print(" -> Running STRtree optimized search...")
+    t_start = time.time()
+    # Build tree and search
+    dist, geom = nearest_optimized(pt, fc_m)
+    t_opt = time.time() - t_start
+    
+    print(f" -> Found nearest distance: {dist:.2f} meters")
+    print(f" -> [Time Comparison] Standard: {t_std*1000:.4f} ms | Indexed: {t_opt*1000:.4f} ms")
+    if t_std > 0:
+        print(f" -> Optimization Factor: {t_std/t_opt:.1f}x faster")
+
+def task_geo_features():
+    """Task 8: Extract Centroids & Envelopes"""
+    print("\n>>> Executing [8] Extracting Geometric Features...")
+    
+    geo_features = []
+    
+    # Loop through all polygons in the dataset
+    polygons = [f for f in fc_m["features"] if f["geometry"]["type"] == "Polygon"]
+    
+    print(f" -> Processing {len(polygons)} polygons...")
+    
+    for poly_feat in polygons:
+        geom = poly_feat["geometry"]
+        
+        # 1. Get Centroid
+        cent = get_centroid(geom)
+        geo_features.append({
+            "type": "Feature",
+            "properties": {"type": "Centroid"},
+            "geometry": cent
+        })
+        
+        # 2. Get Envelope (Bounding Box)
+        env = get_envelope(geom)
+        geo_features.append({
+            "type": "Feature",
+            "properties": {"type": "Envelope"},
+            "geometry": env
+        })
+        
+    write_geojson({"type": "FeatureCollection", "features": geo_features}, "out/geo_features.geojson")
+    print(" -> Saved Centroids and Envelopes to out/geo_features.geojson")
+
+
 def task_viz():
-    """Task 5: Visualize Results (Smart Mode)"""
+    """Task 5: Visualize Results (Smart Mode with Linkage)"""
     print("\n>>> Executing [5] Generating Visualization...")
     
     viz_features = []
-    title = ""
-    # Define paths to potential result files
+    title_parts = []
+    
+    # Paths
     path_clip = "out/clipped_features.geojson"
     path_buf = "out/buffer_500m.geojson"
+    path_geo = "out/geo_features.geojson"
     
-    # Logic: Prioritize displaying Clipped results if they exist (Task 2)
+    # --- Layer 1: Base Map (Result of Task 1 or 2) ---
+    has_processed_data = False
+    
+    # Priority 1: Clipped Results
     if os.path.exists(path_clip):
         print(f" -> [Display] Detected clip result: {path_clip}")
         try:
             with open(path_clip, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 if "features" in data: viz_features.extend(data["features"])
-                title = "Clipped Features Result"
+                title_parts.append("Clipped")
+                has_processed_data = True
         except Exception: pass
 
-    # If no clip result, check if Buffer result exists (Task 1)
+    # Priority 2: Buffer Results (if no clip)
     elif os.path.exists(path_buf):
         print(f" -> [Display] Detected buffer file: {path_buf}")
         try:
@@ -125,31 +199,44 @@ def task_viz():
                 data = json.load(f)
                 if "features" in data: viz_features.extend(data["features"])
                 elif "type" in data and data["type"] == "Polygon":
-                     # Wrap single geometry into a feature for plotting consistency
                      viz_features.append({"type": "Feature", "properties": {"type": "Buffer"}, "geometry": data})
-                title = "Buffer Analysis Result"
+                title_parts.append("Buffer")
+                has_processed_data = True
         except Exception: pass
 
-    # Fallback: Just show original data if no processing happened
+    # Fallback: Original Data
     else:
         print(" -> No processing results found, displaying original data...")
         viz_features.extend(fc_m["features"])
-        title = "Original Data (No Processing)"
+        title_parts.append("Original Data")
 
-    # Add Context: Always add the original Polygon (outline) for comparison
-    if "Buffer" in title:
+    # --- Layer 2: Geometric Features (Result of Task 8) ---
+    # This acts as an overlay regardless of what base map is shown
+    if os.path.exists(path_geo):
+        print(f" -> [Linkage] Detected geometric features (Centroids/Envelopes)")
+        try:
+            with open(path_geo, 'r', encoding='utf-8') as f:
+                geo_data = json.load(f)
+                if "features" in geo_data:
+                    viz_features.extend(geo_data["features"])
+                title_parts.append("+ Geometry")
+        except Exception: pass
+
+    # --- Context Layers ---
+    # Always add original Polygon outline for reference if we are showing Buffer/Clip
+    if has_processed_data:
         viz_features.append({"type": "Feature", "geometry": poly, "properties": {"type": "Original"}})
         
-    # Add Context: Always add original Points
-    if "Buffer" in title or "Clipped" in title:
+    # Always add original Points for context
+    if has_processed_data:
          points = [f for f in fc_m["features"] if f["geometry"]["type"] == "Point"]
          viz_features.extend(points)
 
-    # Call the plotting function in viz.py
+    # Plot
+    final_title = " / ".join(title_parts)
     output_file = "out/visualization_result.png"
     try:
-        plot_features({"type": "FeatureCollection", "features": viz_features}, title=title, output_path=output_file)
-        # Automatically open the image on Windows
+        plot_features({"type": "FeatureCollection", "features": viz_features}, title=final_title, output_path=output_file)
         if sys.platform == "win32": os.startfile(os.path.abspath(output_file))
     except Exception as e:
         print(f" [Error] Plotting failed: {e}")
@@ -405,7 +492,6 @@ def task_report():
             with open(path_clip, 'r', encoding='utf-8') as f:
                 clip_data = json.load(f)
                 if "features" in clip_data:
-                    # Filter for Point geometries
                     target_points = [f for f in clip_data["features"] if f["geometry"]["type"] == "Point"]
                 data_source_desc = "Clipped Data (Task 2)"
         except Exception:
@@ -419,30 +505,26 @@ def task_report():
         target_points = [f for f in fc_m["features"] if f["geometry"]["type"] == "Point"]
 
     # ==========================================
-    # 2. Determine Reference Standard (Inside/Outside based on what?)
+    # 2. Determine Reference Standard
     # ==========================================
     path_buf = "out/buffer_500m.geojson"
     reference_geom = None
     ref_source_desc = ""
 
-    # Check if Task 1 (Buffer) was run. If so, use THAT buffer (e.g. 200m) for checking.
     if os.path.exists(path_buf):
         try:
             with open(path_buf, 'r', encoding='utf-8') as f:
                 buf_data = json.load(f)
-                # Handle both Geometry and Feature structures
                 if "type" in buf_data and buf_data["type"] == "Polygon":
                     reference_geom = buf_data
                 elif "features" in buf_data:
                     reference_geom = buf_data["features"][0]["geometry"]
-                
                 ref_source_desc = "File Read (Task 1)"
                 if not os.path.exists(path_clip):
                     print(f" -> [Linked] Buffer file loaded as judgment standard")
         except Exception:
             pass
             
-    # Fallback: Calculate a default 500m buffer in memory
     if reference_geom is None:
         if not os.path.exists(path_buf):
             pass 
@@ -450,23 +532,16 @@ def task_report():
         ref_source_desc = "Default 500m"
 
     # ==========================================
-    # 3. Start Calculation and Generation
+    # 3. Start Calculation
     # ==========================================
     print(f" -> Analyzing {len(target_points)} points based on [{data_source_desc}]...")
     
     for i, pt_feature in enumerate(target_points):
         geom = pt_feature["geometry"]
-        
-        # 1. Calculate distance (Always to original polygon)
         d, _, _ = nearest(geom, poly)
-        
-        # 2. Determine containment (Based on reference_geom determined above)
         in_buf = is_contained(reference_geom, geom)
-        
-        # 3. Get Name property
         p_name = pt_feature.get("properties", {}).get("name", f"Point_{i+1}")
 
-        # Construct the data row
         row = {
             "ID": i + 1,
             "Name": p_name,
@@ -476,11 +551,9 @@ def task_report():
         }
         report_data.append(row)
         
-    # Write the report to CSV
     csv_path = "out/distance_report.csv"
     write_csv(report_data, csv_path)
     
-    # Automatically open CSV on Windows
     if sys.platform == "win32":
         try:
             os.startfile(os.path.abspath(csv_path))
@@ -498,10 +571,11 @@ MENU = {
     "4": ("Geometric Analysis", task_analysis),
     "5": ("Visualize Results", task_viz),
     "6": ("Generate Report (Export CSV)", task_report),
-    "7": ("Batch Query (Generated Points) [Baseline vs Index]", task_batch),
-    "8": ("Geometry Summary (bbox / centroid)", task_geometry_summary),
-    "9": ("KNN Top-K Nearest Points", task_knn),
-
+    "7": ("High-Speed Search (STRtree) ", task_optimized_search),
+    "8": ("Extract Centroids/Envelopes ", task_geo_features),
+    "9": ("Batch Query (Generated Points) [Baseline vs Index]", task_batch),
+    "10": ("Geometry Summary (bbox / centroid)", task_geometry_summary),
+    "11": ("KNN Top-K Nearest Points", task_knn),
 
 }
 
@@ -514,22 +588,18 @@ if __name__ == "__main__":
         print("\n" + "="*40)
         print("      GeoToolkit Interactive Console")
         print("="*40)
-        # Dynamically display menu items
         for key, (desc, _) in MENU.items():
             print(f" [{key}] {desc}")
         print(" [0] Exit Program")
         print("-" * 40)
         
-        # Get user input
         user_input = input("Enter function ID (Multi-select e.g. '1,6'): ").strip()
         
-        # Handle Exit
         if user_input in ['0', 'q', 'exit', 'quit']:
             print("Exiting program...")
             break
         if not user_input: continue
 
-        # Parse input: Replace Chinese comma with English comma just in case, split by whitespace
         selection_keys = user_input.replace("，", ",").replace(",", " ").split()
         
         valid_choice = False
@@ -537,14 +607,12 @@ if __name__ == "__main__":
             if key in MENU:
                 valid_choice = True
                 try:
-                    # Execute the selected function
                     MENU[key][1]() 
                 except Exception as e:
                     print(f"[Error] Execution failed: {e}")
             else:
                 if key != '0': print(f"\n[Warning] Invalid ID '{key}'.")
         
-        # Pause after execution so user can read the output
         if valid_choice:
             input("\nTask completed, press [Enter] to return to menu...")
             
