@@ -64,40 +64,57 @@ def task_analysis():
     print(f" -> 原始点是否在缓冲区内: {is_inside}")
 
 def task_viz():
-    """功能 5: 可视化结果 (修复版)"""
+    """功能 5: 可视化结果 (智能版：优先展示裁剪结果)"""
     print("\n>>> 正在执行 [5] 生成可视化图表...")
     
-    # 1. 生成缓冲区几何体 (注意：这只是一个 Geometry 字典，没有 features 键)
-    buf_geom = buffer(poly, 500)
+    viz_features = []
+    title = "Visualization"
     
-    # 2. 【关键修复】我们需要手动把它包装成一个 Feature 对象
-    # 因为 plot_features 函数预期列表里都是 Feature
-    buf_feature = {
-        "type": "Feature",
-        "properties": {"name": "Buffer Area"}, # 可以随便加属性
-        "geometry": buf_geom
-    }
-    
-    # 3. 获取原始点 Feature (这些已经在 fc_m 里是 Feature 格式了，不用改)
-    point_features = [f for f in fc_m["features"] if f["geometry"]["type"] == "Point"]
-    
-    # 4. 将它们组合成一个列表
-    # 现在的列表里是：[缓冲区Feature, 原始点Feature]
+    # --- 1. 尝试加载裁剪后的结果 (Task 2 的产物) ---
+    clip_path = "out/clipped_features.geojson"
+    if os.path.exists(clip_path):
+        print(f" -> 检测到裁剪结果文件: {clip_path}")
+        try:
+            with open(clip_path, 'r', encoding='utf-8') as f:
+                clip_data = json.load(f)
+                # 给裁剪结果加个特殊的颜色属性（可选，但在 plot_features 里如果能处理更好）
+                viz_features.extend(clip_data.get("features", []))
+                title = "Clipped Features Result"
+        except Exception as e:
+            print(f" [警告] 读取裁剪文件失败: {e}")
+    else:
+        print(" -> 未找到裁剪结果，将展示默认缓冲区...")
+        # 如果没跑过 Task 2，就现场算一个缓冲区画出来
+        buf_geom = buffer(poly, 500)
+        viz_features.append({
+            "type": "Feature",
+            "properties": {"type": "Buffer"},
+            "geometry": buf_geom
+        })
+        title = "Buffer Analysis (Default)"
+
+    # --- 2. 总是把原始点加上，作为参考 ---
+    # 找到原始数据里的点
+    points = [f for f in fc_m["features"] if f["geometry"]["type"] == "Point"]
+    viz_features.extend(points)
+
+    # --- 3. 组合数据并绘图 ---
     viz_data = {
         "type": "FeatureCollection",
-        "features": [buf_feature] + point_features
+        "features": viz_features
     }
     
-    # 5. 调用绘图
     output_file = "out/visualization_result.png"
-    plot_features(viz_data, title="Buffer Analysis Result (500m)", output_path=output_file)
+    # 调用 viz.py 里的函数
+    plot_features(viz_data, title=title, output_path=output_file)
     
-    # 尝试自动打开图片
+    # 自动打开
     if sys.platform == "win32":
         try:
             os.startfile(os.path.abspath(output_file))
         except Exception:
             pass
+        
 # ==========================================
 # 3. 菜单配置
 # ==========================================
