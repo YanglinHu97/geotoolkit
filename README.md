@@ -1,7 +1,7 @@
 # geotoolkit
 
-`geotoolkit` is a small Python library for basic vector-based geoprocessing.
-It provides utilities for reading and writing GeoJSON data, coordinate transformation between EPSG codes, geometric buffering, clipping, and nearest distance calculations.
+`geotoolkit` is a small Python library for vector-based geospatial processing built around GeoJSON data structures.
+It provides a compact set of utilities for reading and writing GeoJSON files, coordinate transformation between EPSG codes, common geometric operations (buffering, clipping, nearest distance), as well as spatial queries and K-nearest-neighbor (KNN) analysis on point data.
 The library is lightweight and does not rely on GDAL, making it suitable for environments such as macOS ARM.
 
 ---
@@ -52,6 +52,18 @@ Visualization supports multiple “feature roles” via `feature.properties.type
 - default polygons (e.g., buffer/clip) — filled polygon layer
 - default points — input points (red)
 
+### Spatial Query (Point-in-Polygon)
+- `tag_points_within(points_fc, polygon_geom, prop="inside", use_index=False, mode="contains")`  
+  Tag each point with a boolean property indicating whether it lies inside (or is covered by) the polygon.
+
+- `filter_points_within(points_fc, polygon_geom, use_index=False, mode="contains")`  
+  Return only the point features that lie inside (or are covered by) the polygon.
+
+> Both functions can optionally use a Shapely `STRtree` spatial index (`use_index=True`) to speed up queries on large point sets.
+
+### K-Nearest Neighbors (KNN)
+- `knn_points(points_fc, target_point_geom, k=10, use_index=False)`  
+  Return the top‑k nearest point features to a target point, with `distance_m` and `knn_rank` added to properties.
 ---
 
 ## Relation to practice lectures
@@ -134,6 +146,8 @@ geotoolkit/
 from geotoolkit.io import read_geojson, write_geojson
 from geotoolkit.project import to_epsg
 from geotoolkit.analysis import buffer, clip, nearest
+from geotoolkit.knn import knn_points
+from geotoolkit.query import filter_points_within
 
 # Load sample data in EPSG:4326
 fc = read_geojson("data/sample.geojson")
@@ -156,6 +170,17 @@ write_geojson(clipped, "out/clipped_features.geojson")
 # Compute nearest distance from the point to the polygon
 dist, a, b = nearest(pt, poly)
 print("Nearest distance (m):", dist)
+
+# Filtering points that lie inside a given polygon
+points = read_geojson("data/generated_points.geojson")
+polygon = read_geojson("data/sample.geojson")["features"][0]["geometry"]
+inside_points = filter_points_within(points, polygon, use_index=True)
+
+# K-nearest-neighbor (KNN) queries can be used to find the closest points to a target geometry.
+points = read_geojson("data/generated_points.geojson")
+target = read_geojson("data/sample.geojson")["features"][1]["geometry"]
+topk = knn_points(points, target, k=10, use_index=True)
+
 ```
 
 Run the example:
@@ -200,8 +225,12 @@ python demo.py
 - `[4] Geometric Analysis` (perimeter + containment check)
 - `[5] Visualize Results` (smart mode with linkage + overlays)
 - `[6] Generate Report (Export CSV)` (linked mode)
-- `[7] High-Speed Search (STRtree) [NEW!]`
-- `[8] Extract Centroids/Envelopes [NEW!]`
+- `[7] High-Speed Search (STRtree) `
+- `[8] Extract Centroids/Envelopes `
+- `[9] Batch Query (Generated Points) [Baseline vs Index]`
+- `[10] Geometry Summary (bbox / centroid)`
+- `[11] KNN Top-K Nearest Points`
+
 
 Exit by typing any of: `0`, `q`, `quit`, `exit`.
 
@@ -334,6 +363,68 @@ Output:
 
 Tip: Run Task 8 and then Task 5 to visualize these derived features as an overlay layer.
 
+### Task 7: Batch Query on Generated Points (Baseline vs Spatial Index)
+
+This task demonstrates **point-in-polygon** queries on a larger point set (e.g., 1000 points) and compares:
+
+ - **Baseline** (`use_index=False`): checks each point against the polygon (O(n))
+ - **Indexed** (`use_index=True`): uses a Shapely `STRtree` to reduce candidate checks
+
+ **Input**
+
+ - `data/generated_points.geojson` (expected to already be in **EPSG:3857**)
+ - Reference geometry: a 500m buffer around the original polygon from `data/sample.geojson`
+
+ **What it runs**
+
+ - `tag_points_within(..., use_index=False)` + `filter_points_within(..., use_index=False, mode="covers")`
+ - `tag_points_within(..., use_index=True)`  + `filter_points_within(..., use_index=True, mode="covers")`
+
+ **Outputs**
+
+ - `out/generated_points_tagged.geojson` (all points + an `inside` boolean property)
+ - `out/generated_points_inside_buffer.geojson` (only inside/covers points)
+ - `out/generated_points_inside_buffer.png` (visualization of inside points + original polygon + buffer)
+
+ ---
+
+ ### Task 8: Geometry Summary (bbox + centroid + area/length)
+
+This task generates a compact **CSV summary** for key geometries using:
+
+ - `get_bbox(geometry)` → `(minx, miny, maxx, maxy)`
+ - `get_centroid(geometry)` → centroid as a GeoJSON `Point`
+ - `get_area(geometry)` / `get_length(geometry)` for polygon-like geometries
+
+ **Geometries summarized**
+
+ - `original_polygon` (from `data/sample.geojson`, projected to EPSG:3857)
+ - `buffer_500m` (buffer around the polygon)
+ - `generated_points` (treated as a `MultiPoint` collection; area/length are not applicable)
+
+ **Output**
+
+ - `out/geometry_summary.csv`
+
+ ---
+
+ ### Task 9: KNN — Find K Nearest Points to the Target Point
+
+This task finds the **top‑k nearest points** (from `data/generated_points.geojson`) to a **target point** (the point contained in `data/sample.geojson`, projected to EPSG:3857).
+
+ - Supports baseline scan (`use_index=False`) or an accelerated candidate search using `STRtree` (`use_index=True`).
+ - Each returned point feature is enriched with:
+   - `distance_m`: distance to the target point (meters in EPSG:3857)
+   - `knn_rank`: 1..k rank
+
+ **Outputs**
+
+ - `out/knn_topk.geojson` (top‑k points with rank and distance)
+ - `out/knn_topk.png` (standalone plot highlighting polygon, buffer, target point, and top‑k points)
+
+ > Tip: for the visualization in Task 9, the script generates a dedicated figure (`plot_knn`) rather than reusing Task 5’s “smart mode” plot, so the top‑k result is always clearly highlighted.
+
+
 ---
 
 ## API Reference (based on the current implementation)
@@ -403,6 +494,12 @@ Returns centroid as a GeoJSON Point geometry dict.
 #### `get_envelope(geometry)` (NEW)
 Returns envelope (minimum bounding rectangle) as a GeoJSON Polygon geometry dict.
 
+#### `get_bbox(geometry)`
+Returns `(minx, miny, maxx, maxy)` for a GeoJSON geometry, based on Shapely `bounds`.
+
+#### `get_centroid(geometry)`
+Returns the centroid of a GeoJSON geometry as a GeoJSON `Point` geometry dict.
+
 ---
 
 ### `geotoolkit.viz`
@@ -416,6 +513,32 @@ Saves a PNG plot for a FeatureCollection.
   - `Original` → black dashed outline
   - `Centroid` → green point
   - `Envelope` → orange dash-dot outline
+
+
+---
+
+### `geotoolkit.query`
+
+#### `tag_points_within(points_fc, polygon_geom, prop="inside", use_index=False, mode="contains")`
+Tags each point feature with a boolean property (default: `inside`) indicating whether the point is inside the polygon.
+
+- `mode="contains"`: strict (boundary is **not** considered inside)
+- `mode="covers"`: inclusive (boundary **is** considered inside)
+- `use_index=True`: uses Shapely `STRtree` to reduce candidate checks
+
+#### `filter_points_within(points_fc, polygon_geom, use_index=False, mode="contains")`
+Returns a FeatureCollection containing only point features that are inside/covers the polygon.
+
+---
+
+### `geotoolkit.knn`
+
+#### `knn_points(points_fc, target_point_geom, k=10, use_index=False)`
+Returns a FeatureCollection containing the top‑k nearest point features to the target point.
+
+Each returned feature gets:
+- `distance_m`: distance to the target (units depend on CRS; meters in EPSG:3857)
+- `knn_rank`: rank from 1..k
 
 ---
 

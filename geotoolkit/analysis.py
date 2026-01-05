@@ -128,7 +128,6 @@ def is_contained(container_geom: JsonDict, content_geom: JsonDict) -> bool:
     # .contains() returns True only if no points of the second geometry lie in the exterior of the first
     return shape(container_geom).contains(shape(content_geom))
 
-# --- [NEW] Spatial Indexing & Geometric Extraction ---
 
 def nearest_optimized(search_geom: JsonDict, target_collection: JsonDict) -> Tuple[float, JsonDict]:
     """
@@ -136,28 +135,35 @@ def nearest_optimized(search_geom: JsonDict, target_collection: JsonDict) -> Tup
     (Significantly faster than brute-force for large datasets).
     """
     search_shape = shape(search_geom)
-    
+
     # 1. Prepare list of target geometries
     targets = [shape(f["geometry"]) for f in target_collection["features"]]
-    
+
     # 2. Build Index Tree (STRtree)
-    # The tree is built once and allows fast querying
     tree = STRtree(targets)
-    
+
     # 3. Fast Query for Nearest Neighbor
-    # tree.nearest returns the index of the nearest geometry in the targets list
     nearest_idx = tree.nearest(search_shape)
     nearest_geom = targets[nearest_idx]
-    
+
     # 4. Calculate Exact Distance
     distance = search_shape.distance(nearest_geom)
-    
+
     return distance, mapping(nearest_geom)
 
+def get_bbox(geometry: JsonDict) -> tuple[float, float, float, float]:
+    """
+    Return bounding box (minx, miny, maxx, maxy) of a geometry.
+    """
+    return shape(geometry).bounds
+
 def get_centroid(geometry: JsonDict) -> JsonDict:
-    """Get the centroid (Center Point) of a geometry."""
+    """
+    Return centroid of a geometry as GeoJSON Point.
+    """
     return mapping(shape(geometry).centroid)
 
 def get_envelope(geometry: JsonDict) -> JsonDict:
     """Get the minimum bounding rectangle (Envelope) of a geometry."""
     return mapping(shape(geometry).envelope)
+
