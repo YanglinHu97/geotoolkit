@@ -1,9 +1,9 @@
 # geotoolkit/query.py
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
-from shapely.geometry import shape, mapping
+from shapely.geometry import shape, mapping, Point
 from shapely.strtree import STRtree
 
 JsonDict = Dict[str, Any]
@@ -106,3 +106,68 @@ def filter_points_within(
         ft["properties"].pop("_inside", None)
 
     return {"type": "FeatureCollection", "features": inside_feats}
+
+
+# [NEW] Function for Spatial Buffer Analysis (Radius Search)
+def filter_points_by_distance(
+    points_fc: JsonDict,
+    center_coords: Tuple[float, float],
+    radius: float,
+    use_index: bool = False
+) -> JsonDict:
+    """
+    Find points within a specific radius of a center coordinate.
+    
+    Parameters
+    ----------
+    points_fc : GeoJSON FeatureCollection
+    center_coords : Tuple (x, y)
+    radius : Distance in map units (e.g., meters)
+    use_index : Use STRtree for optimization
+    
+    Returns
+    -------
+    GeoJSON FeatureCollection (points within radius)
+    """
+    center_pt = Point(center_coords)
+    point_feats = _iter_point_features(points_fc)
+    pts = [shape(ft["geometry"]) for ft in point_feats]
+    
+    result_feats = []
+    
+    if use_index:
+        # Optimization: Use R-Tree to find candidates in the bounding box first
+        tree = STRtree(pts)
+        # Create a buffer (circle) geometry to query the index
+        search_area = center_pt.buffer(radius)
+        candidate_indices = tree.query(search_area)
+        
+        for idx in candidate_indices:
+            dist = center_pt.distance(pts[idx])
+            if dist <= radius:
+                ft = point_feats[idx]
+                props = dict(ft.get("properties", {}))
+                props["distance_to_center"] = dist # [NEW] Add attribute
+                result_feats.append({
+                    "type": "Feature",
+                    "properties": props,
+                    "geometry": mapping(pts[idx])
+                })
+    else:
+        # Standard Loop (Brute Force)
+        for i, pt in enumerate(pts):
+            dist = center_pt.distance(pt)
+            if dist <= radius:
+                ft = point_feats[i]
+                props = dict(ft.get("properties", {}))
+                props["distance_to_center"] = dist # [NEW] Add attribute
+                result_feats.append({
+                    "type": "Feature",
+                    "properties": props,
+                    "geometry": mapping(pt)
+                })
+                
+    # Sort results by distance for better readability
+    result_feats.sort(key=lambda x: x["properties"]["distance_to_center"])
+    
+    return {"type": "FeatureCollection", "features": result_feats}
