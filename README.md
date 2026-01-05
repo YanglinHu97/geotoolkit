@@ -121,16 +121,21 @@ geotoolkit/
 │   ├── project.py
 │   ├── analysis.py
 │   ├── viz.py
-│   └── __init__.py
+│   ├── __init__.py
+│   ├── query.py
+│   └── knn.py
 │
 ├── data/
-│   └── sample.geojson
+│   ├── sample.geojson
+│   └── generated_points.geojson
 │
 ├── out/                  # generated outputs (created automatically by demo.py)
 │
 ├── tests/
 │   ├── test_project.py
-│   └── test_analysis.py
+│   ├── test_analysis.py
+│   ├── test_query.py
+│   └── test_knn.py
 │
 ├── demo.py               # interactive console demo
 ├── README.md
@@ -363,7 +368,9 @@ Output:
 
 Tip: Run Task 8 and then Task 5 to visualize these derived features as an overlay layer.
 
-### Task 7: Batch Query on Generated Points (Baseline vs Spatial Index)
+---
+
+### Task 9: Batch Query on Generated Points (Baseline vs Spatial Index)
 
 This task demonstrates **point-in-polygon** queries on a larger point set (e.g., 1000 points) and compares:
 
@@ -388,7 +395,7 @@ This task demonstrates **point-in-polygon** queries on a larger point set (e.g.,
 
  ---
 
- ### Task 8: Geometry Summary (bbox + centroid + area/length)
+ ### Task 10: Geometry Summary (bbox + centroid + area/length)
 
 This task generates a compact **CSV summary** for key geometries using:
 
@@ -408,7 +415,7 @@ This task generates a compact **CSV summary** for key geometries using:
 
  ---
 
- ### Task 9: KNN — Find K Nearest Points to the Target Point
+ ### Task 11: KNN — Find K Nearest Points to the Target Point
 
 This task finds the **top‑k nearest points** (from `data/generated_points.geojson`) to a **target point** (the point contained in `data/sample.geojson`, projected to EPSG:3857).
 
