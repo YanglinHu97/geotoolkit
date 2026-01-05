@@ -11,26 +11,32 @@ def plot_features(feature_collection, title="GeoJSON Plot", output_path="out/plo
         # Convert GeoJSON feature to Shapely geometry for easy coordinate extraction
         geom = shape(feature["geometry"])
         geom_type = geom.geom_type
-        # Extract properties to check for custom flags (like 'Original')
+        # Extract properties to check for custom flags (like 'Original' or 'Centroid')
         props = feature.get("properties", {})
+        feat_type = props.get("type", "")
         
-        # Styling logic based on geometry type
+        # Styling logic based on geometry type and properties
         if geom_type == 'Point':
-            # Plot points as red dots ('ro')
-            # zorder=5 ensures points appear on top of polygons
-            ax.plot(geom.x, geom.y, 'ro', markersize=6, label='Point', zorder=5)
+            if feat_type == "Centroid":
+                # [NEW] Centroids: Green dots, slightly larger
+                ax.plot(geom.x, geom.y, 'go', markersize=8, label='Centroid', zorder=10)
+            else:
+                # Standard Points: Red dots
+                ax.plot(geom.x, geom.y, 'ro', markersize=6, label='Point', zorder=5)
             
         elif geom_type == 'Polygon':
-            # Extract x and y coordinates of the polygon exterior
             x, y = geom.exterior.xy
             
-            # Special Style: If it is the original polygon (marked as 'Original' in demo.py)
-            # Use black dashed lines to differentiate it from the result
-            if props.get("type") == "Original":
+            if feat_type == "Original":
+                # Original Polygon: Black dashed line
                 ax.plot(x, y, 'k--', linewidth=1.5, label='Original Polygon')
+            
+            elif feat_type == "Envelope":
+                # [NEW] Envelope: Orange dash-dot line, no fill
+                ax.plot(x, y, color='orange', linestyle='-.', linewidth=2, label='Envelope', zorder=4)
+                
             else:
-                # Default Style: Buffer or regular polygon
-                # Use blue outline and semi-transparent fill
+                # Default (Buffer/Clip): Blue outline and fill
                 ax.plot(x, y, color='#6699cc', alpha=0.8, linewidth=2)
                 ax.fill(x, y, color='#6699cc', alpha=0.3)
 

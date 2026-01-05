@@ -2,10 +2,12 @@
 # in the geo-algorithms practice notebooks (buffer, intersection, nearest).
 
 from __future__ import annotations
-
+import time
 from typing import Any, Dict, Tuple
 from shapely.geometry import shape, mapping
 from shapely.ops import nearest_points
+# [NEW] Import STRtree for spatial indexing
+from shapely.strtree import STRtree
 
 JsonDict = Dict[str, Any]
 
@@ -85,6 +87,7 @@ def clip(feature_or_fc: JsonDict, clipper_geom: JsonDict) -> JsonDict:
 def nearest(a_geom: JsonDict, b_geom: JsonDict) -> Tuple[float, JsonDict, JsonDict]:
     """
     Compute nearest distance and nearest points between two geometries.
+    Uses standard brute-force calculation.
 
     Notes
     -----
@@ -100,7 +103,7 @@ def nearest(a_geom: JsonDict, b_geom: JsonDict) -> Tuple[float, JsonDict, JsonDi
     # Calculate Euclidean distance and return points in GeoJSON format
     return (pA.distance(pB), mapping(pA), mapping(pB))
 
-# --- New Features: Geometric Attribute Calculation ---
+# --- Geometric Attribute Calculation ---
 
 def get_area(geometry: JsonDict) -> float:
     """
@@ -124,3 +127,37 @@ def is_contained(container_geom: JsonDict, content_geom: JsonDict) -> bool:
     """
     # .contains() returns True only if no points of the second geometry lie in the exterior of the first
     return shape(container_geom).contains(shape(content_geom))
+
+# --- [NEW] Spatial Indexing & Geometric Extraction ---
+
+def nearest_optimized(search_geom: JsonDict, target_collection: JsonDict) -> Tuple[float, JsonDict]:
+    """
+    Use STRtree spatial indexing to quickly find the nearest geometry from a collection.
+    (Significantly faster than brute-force for large datasets).
+    """
+    search_shape = shape(search_geom)
+    
+    # 1. Prepare list of target geometries
+    targets = [shape(f["geometry"]) for f in target_collection["features"]]
+    
+    # 2. Build Index Tree (STRtree)
+    # The tree is built once and allows fast querying
+    tree = STRtree(targets)
+    
+    # 3. Fast Query for Nearest Neighbor
+    # tree.nearest returns the index of the nearest geometry in the targets list
+    nearest_idx = tree.nearest(search_shape)
+    nearest_geom = targets[nearest_idx]
+    
+    # 4. Calculate Exact Distance
+    distance = search_shape.distance(nearest_geom)
+    
+    return distance, mapping(nearest_geom)
+
+def get_centroid(geometry: JsonDict) -> JsonDict:
+    """Get the centroid (Center Point) of a geometry."""
+    return mapping(shape(geometry).centroid)
+
+def get_envelope(geometry: JsonDict) -> JsonDict:
+    """Get the minimum bounding rectangle (Envelope) of a geometry."""
+    return mapping(shape(geometry).envelope)
