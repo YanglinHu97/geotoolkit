@@ -400,8 +400,8 @@ pytest -q
 
 ## License
 
-MIT License.
-
 ```
+
+MIT License.
 
 ```
