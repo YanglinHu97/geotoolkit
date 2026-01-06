@@ -1,8 +1,3 @@
-Here is the updated `README.md`. I have preserved the original structure and introduction as requested, while strictly updating the feature lists, usage examples, demo workflows, and API references to match the code you provided (specifically the new **Spatial Buffer Analysis**, **World Cities** integration, and **Raster** capabilities).
-
-All content has been converted to English.
-
-```markdown
 # geotoolkit
 
 `geotoolkit` is a small Python library for vector-based geospatial processing built around GeoJSON data structures.
